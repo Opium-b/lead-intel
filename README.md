@@ -26,8 +26,10 @@ npm install && npm run dev                  # http://localhost:5173, sign in wit
 | | |
 |---|---|
 | `uv run python -m app.cli run` | incremental collection (continues from the last run's cursor) |
+| `uv run python -m app.cli enrich` | find websites + contacts for due leads (also runs after every `run`) |
 | `uv run python -m app.cli reprocess` | re-derive signals and scores after changing rules/weights |
 | `uv run pytest` | backend tests (uses `leadintel_test` DB) |
 | `PUT /api/scoring-rules/{key}` | change a weight, then `POST /api/admin/reprocess` |
 
 Target profile (`.env`): `TARGET_MIN_FLEET`, `TARGET_MAX_FLEET`, `TARGET_ACTIVE_ONLY`, `COLLECT_STATES`.
+Enrichment (`.env`): `ENRICH_MIN_SCORE`, `ENRICH_TTL_DAYS`, `ENRICH_LIMIT`, optional `BRAVE_API_KEY` for web search.

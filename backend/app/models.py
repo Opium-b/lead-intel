@@ -48,6 +48,7 @@ class Company(TimestampMixin, Base):
     operating_status: Mapped[str | None] = mapped_column(String(32))
     website: Mapped[str | None] = mapped_column(String(512))
     added_at: Mapped[date | None] = mapped_column(Date)  # carrier registration date at source
+    enriched_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))  # last website/contact lookup
     attributes: Mapped[dict] = mapped_column(JSONB, default=dict)
 
     signals: Mapped[list["Signal"]] = relationship(back_populates="company", order_by="Signal.observed_at.desc()")

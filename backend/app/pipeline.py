@@ -12,6 +12,7 @@ from app import scoring
 from app.collectors import COLLECTORS
 from app.collectors.base import NormalizedBatch
 from app.config import get_settings
+from app.enrichment import enrich_leads
 from app.models import Company, CollectorRun, Contact, Lead, LeadEvent, Signal, SourceRecord
 from app.signals.base import Fact
 from app.services_catalog import pitch
@@ -153,6 +154,11 @@ def _run(db: Session, source: str, stats: dict, collect) -> CollectorRun:
         batch = collect()
         ids = ingest(db, batch)
         result = process_companies(db, ids)
+        try:
+            result["enrichment"] = enrich_leads(db)
+        except Exception:  # enrichment is best-effort; collection already succeeded
+            db.rollback()
+            log.exception("collector run %d: enrichment failed", run.id)
         run.status = "success"
         # refreshes don't move the discovery cursor
         run.cursor = (batch.cursor or date.fromisoformat(stats["since"])) if "since" in stats else None

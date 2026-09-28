@@ -150,12 +150,13 @@ Every draft carries `evidence` (the exact fields used) plus `source_url` and `ob
 
 ## 8. Enrichment architecture (phase 2)
 
-`EnrichmentProvider.enrich(company) -> list[ContactDraft]`, each with `source` and `source_url`. It runs only for leads ≥ `ENRICH_MIN_SCORE`, and at most once per `ENRICH_TTL_DAYS`.
-1. `fmcsa_census`: registered phone/email (already in the V1 collector).
-2. `email_domain`: a non-free-mail email domain gives a website candidate, verified by HTTP 200.
-3. `website`: fetches the homepage plus `/contact` **only if robots.txt allows**, then extracts `mailto:`, `tel:` and social links.
+`app/enrichment.py`. `Enricher.enrich(company, emails, phones) -> (website, list[ContactRecord])`, each contact with `source` and the exact page `source_url`. It runs at the end of every collector run and via `cli enrich`, only for leads ≥ `ENRICH_MIN_SCORE`, best score first, at most `ENRICH_LIMIT` per run, and at most once per `ENRICH_TTL_DAYS` per company (`companies.enriched_at`).
+1. `fmcsa_census`: registered phone/email (in the V1 collector).
+2. `email_domain`: a non-free-mail registered email domain → `https://<domain>/`, accepted if it answers (the registration itself is the evidence).
+3. `web_search` (only when `BRAVE_API_KEY` is set and step 2 found nothing): Brave Search for `"name" city state`. Directory/social/.gov hosts are skipped; a result's site is accepted **only if one of its pages shows the USDOT number or registered phone**.
+4. `website`: homepage plus up to 2 linked contact pages, **only if robots.txt allows**; extracts `mailto:`, `tel:` and Facebook/LinkedIn/Instagram/X links.
 
-No guessing: nothing is stored that was not observed on a page, and every contact records where it was seen.
+No guessing: nothing is stored that was not observed, and every contact records where it was seen. Pages are capped at 2 MB, requests time out after 10 s, and private/loopback addresses are refused. A failed company is not marked enriched, so it is retried next run; a new contact adds an `ENRICHED` lead event and triggers a re-score.
 
 ## 9. Telegram architecture (phase 3)
 

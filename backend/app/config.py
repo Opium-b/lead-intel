@@ -24,6 +24,12 @@ class Settings(BaseSettings):
 
     lead_min_score: int = 1  # companies scoring below this don't become leads
 
+    # Phase 2 enrichment: website + contacts for leads at/above this score, re-checked every TTL days
+    enrich_min_score: int = 30
+    enrich_ttl_days: int = 30
+    enrich_limit: int = 100  # companies per run
+    brave_api_key: str | None = None  # optional: web search when the registered email is free-mail
+
     telegram_bot_token: str | None = None
     telegram_chat_id: str | None = None
     notify_min_score: int = 70
