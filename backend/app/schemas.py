@@ -62,8 +62,12 @@ class LeadRow(BaseModel):
     company_id: int
     name: str
     dot_number: str | None
+    mc_number: str | None
     state: str | None
+    city: str | None
     fleet_size: int | None
+    drivers: int | None
+    added_at: date | None
     score: int
     status: str
     signal_count: int

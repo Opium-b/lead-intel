@@ -14,11 +14,15 @@ from app.models import ScoringRule
 
 # Tuned for a full-service trucking provider (compliance, drivers, ELD, safety, maintenance, insurance,
 # permits/taxes, new-carrier setup, back office). Rows are seeded once; the DB is the source of truth after that.
-URGENT = ["OUT_OF_SERVICE", "CRASH", "INSURANCE_CANCELLATION", "AUTHORITY_REVOKED"]
+URGENT = ["OUT_OF_SERVICE", "CRASH", "INSURANCE_CANCELLATION", "AUTHORITY_REVOKED", "INSURANCE_SUSPENDED",
+          "SUSPENSION_NOTICE", "INSURANCE_NEEDED"]
 DEFAULT_RULES = [
     # key, label, kind, weight, params[, enabled]
     ("sig_new_carrier", "New carrier", "signal_type", 25, {"type": "NEW_CARRIER"}),
     ("sig_insurance_cancel", "Insurance cancellation", "signal_type", 25, {"type": "INSURANCE_CANCELLATION"}),
+    ("sig_insurance_suspended", "Suspended for no insurance", "signal_type", 30, {"type": "INSURANCE_SUSPENDED"}),
+    ("sig_suspension_notice", "Suspension notice served", "signal_type", 30, {"type": "SUSPENSION_NOTICE"}),
+    ("sig_insurance_needed", "Pending authority, no insurance filed", "signal_type", 25, {"type": "INSURANCE_NEEDED"}),
     ("sig_high_oos_rate", "High out-of-service rate", "signal_type", 20, {"type": "HIGH_OOS_RATE"}),
     ("sig_authority_revoked", "Authority revoked", "signal_type", 20, {"type": "AUTHORITY_REVOKED"}),
     ("sig_new_authority", "New operating authority", "signal_type", 15, {"type": "NEW_AUTHORITY"}),

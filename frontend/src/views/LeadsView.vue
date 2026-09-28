@@ -67,8 +67,9 @@ const SIGNAL_TYPES = Object.keys(SIGNAL_LABELS)
       <thead>
         <tr>
           <th><button class="th" @click="sortBy('name')">Company {{ arrow('name') }}</button></th>
-          <th>DOT</th>
-          <th><button class="th" @click="sortBy('state')">State {{ arrow('state') }}</button></th>
+          <th>DOT / MC</th>
+          <th><button class="th" @click="sortBy('state')">Location {{ arrow('state') }}</button></th>
+          <th><button class="th" @click="sortBy('added_at')">Registered {{ arrow('added_at') }}</button></th>
           <th><button class="th" @click="sortBy('signals')">Signals {{ arrow('signals') }}</button></th>
           <th>Pitch</th>
           <th><button class="th" @click="sortBy('score')">Score {{ arrow('score') }}</button></th>
@@ -80,9 +81,10 @@ const SIGNAL_TYPES = Object.keys(SIGNAL_LABELS)
       <tbody>
         <tr v-for="l in data?.items" :key="l.id" @click="$router.push(`/leads/${l.id}`)" class="clickable">
           <td><RouterLink :to="`/leads/${l.id}`" @click.stop>{{ l.name }}</RouterLink>
-            <div class="muted small">{{ l.fleet_size ?? '?' }} power units</div></td>
-          <td class="mono">{{ l.dot_number }}</td>
-          <td>{{ l.state }}</td>
+            <div class="muted small">{{ l.fleet_size ?? '?' }} trucks · {{ l.drivers ?? '?' }} drivers</div></td>
+          <td class="mono">{{ l.dot_number }}<div class="muted small">{{ l.mc_number }}</div></td>
+          <td>{{ l.city }}<span v-if="l.city && l.state">, </span>{{ l.state }}</td>
+          <td class="small">{{ l.added_at ? fmtDate(l.added_at) : '' }}</td>
           <td><span class="muted small">{{ l.signal_count }} ·</span>
             <span v-for="t in l.signal_types" :key="t" class="chip">{{ signalLabel(t) }}</span></td>
           <td class="small"><div v-for="k in l.service_lines.slice(0, 3)" :key="k" class="pitch-line">{{ lineLabel(k) }}</div>
@@ -92,7 +94,7 @@ const SIGNAL_TYPES = Object.keys(SIGNAL_LABELS)
           <td><span :class="['status', l.status.toLowerCase()]">{{ statusLabel(l.status) }}</span></td>
           <td class="small">{{ fmtDate(l.updated_at) }}</td>
         </tr>
-        <tr v-if="data && !data.items.length"><td colspan="9" class="muted">No leads match these filters.</td></tr>
+        <tr v-if="data && !data.items.length"><td colspan="10" class="muted">No leads match these filters.</td></tr>
       </tbody>
     </table>
   </div>

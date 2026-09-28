@@ -22,6 +22,7 @@ def service_lines():
     return [{"key": k, "label": label, "services": services} for k, (label, services) in SERVICE_LINES.items()]
 
 SORTS = {"score": Lead.score, "updated_at": Lead.updated_at, "name": Company.name, "state": Company.state,
+         "added_at": Company.added_at,
          "signals": "signal_count"}
 SEVERITY_ORDER = {"critical": 0, "high": 1, "medium": 2, "low": 3}
 
@@ -41,7 +42,7 @@ def list_leads(
     signal_type: str | None = Query(None, pattern="^[A-Z_]{1,64}$"),
     service_line: str | None = Query(None, pattern="^[a-z_]{1,32}$"),
     sort: Literal["score", "-score", "updated_at", "-updated_at", "name", "-name", "state", "-state",
-                  "signals", "-signals"] = "-score",
+                  "signals", "-signals", "added_at", "-added_at"] = "-score",
     page: int = Query(1, ge=1),
     page_size: int = Query(25, ge=1, le=100),
 ):
@@ -72,8 +73,8 @@ def list_leads(
     col = sig.c.signal_count if col == "signal_count" else col
     order = col.desc().nulls_last() if sort.startswith("-") else col.asc().nulls_last()
     rows = db.execute(stmt.order_by(order, Lead.id).offset((page - 1) * page_size).limit(page_size)).all()
-    items = [LeadRow(id=l.id, company_id=c.id, name=c.name, dot_number=c.dot_number, state=c.state,
-                     fleet_size=c.fleet_size, score=l.score, status=l.status, signal_count=n,
+    items = [LeadRow(id=l.id, company_id=c.id, name=c.name, dot_number=c.dot_number, mc_number=c.mc_number,
+                     state=c.state, city=c.city, fleet_size=c.fleet_size, drivers=c.drivers, added_at=c.added_at, score=l.score, status=l.status, signal_count=n,
                      signal_types=sorted(types or []),
                      service_lines=l.service_lines or [], phone=phone, email=email, person=person,
                      updated_at=l.updated_at)

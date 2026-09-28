@@ -239,6 +239,28 @@ class AuthorityRevokedRule:
         return out
 
 
+MOTUS_STATUS_FIELDS = ("docket_number", "usdot_number", "op_auth_type", "op_auth_status", "reason", "status_change_date")
+
+
+def _docket(f: Fact) -> str:
+    return (f.payload.get("docket_number") or "").replace("-", "")
+
+
+def _auth_key(f: Fact) -> tuple[str, str]:
+    return _docket(f), f.payload.get("op_auth_type") or ""
+
+
+def _motus_latest(facts: list[Fact]) -> dict[tuple[str, str], Fact]:
+    """Newest Motus status row per authority (docket + authority type)."""
+    latest: dict[tuple[str, str], Fact] = {}
+    for f in facts:
+        if f.record_type == "authority_status":
+            k, d = _auth_key(f), f.payload.get("status_change_date") or ""
+            if k not in latest or d >= (latest[k].payload.get("status_change_date") or ""):
+                latest[k] = f
+    return latest
+
+
 class NewAuthorityRule:
     name = "NewAuthorityRule"
     days = 180
@@ -255,11 +277,142 @@ class NewAuthorityRule:
                            _pick(f, *AUTHORITY_FIELDS))
                 s.observed_at = granted
                 out.append(s)
+        # Motus (FMCSA's new registration system): a grant counts while that authority is still active
+        latest = _motus_latest(facts)
+        for f in facts:
+            granted = parse_date(f.payload.get("status_change_date")) if f.record_type == "authority_status" else None
+            if (granted and (f.payload.get("reason") or "").lower() == "granted" and (today - granted).days <= self.days
+                    and latest[_auth_key(f)].payload.get("op_auth_status") == "Active"):
+                s = _draft(self.name, "NEW_AUTHORITY", f,
+                           f"New operating authority {_docket(f)} ({f.payload.get('op_auth_type', '').lower()}) "
+                           f"granted {granted}", "low", _pick(f, *MOTUS_STATUS_FIELDS))
+                s.observed_at = granted
+                out.append(s)
         return out
 
 
-INSURANCE_FIELDS = ("docket_number", "mod_col_1", "name_company", "policy_no", "ins_form_code", "effective_date",
+def _other_active(f: Fact, facts: list[Fact], latest: dict[tuple[str, str], Fact]) -> bool:
+    """Carrier still runs the same kind of authority under another docket (e.g. only an old second MC lapsed)."""
+    kind = f.payload.get("op_auth_type")
+    return any(o.payload.get("op_auth_type") == kind and _docket(o) != _docket(f)
+               and o.payload.get("op_auth_status") == "Active"
+               for o in [*latest.values(), *(x for x in facts if x.record_type == "authority_filings")])
+
+
+class InsuranceSuspendedRule:
+    """Authority currently suspended because insurance lapsed. It needs a new filing to be reinstated."""
+
+    name = "InsuranceSuspendedRule"
+    days = 365
+
+    def evaluate(self, facts, today):
+        out = []
+        latest = _motus_latest(facts)
+        for f in latest.values():
+            reason, d = f.payload.get("reason") or "", parse_date(f.payload.get("status_change_date"))
+            if (f.payload.get("op_auth_status") != "Inactive" or not reason.startswith("Involuntary Suspension")
+                    or "insurance" not in reason or not d or (today - d).days > self.days
+                    or _other_active(f, facts, latest)):
+                continue
+            s = _draft(self.name, "INSURANCE_SUSPENDED", f,
+                       f"Authority {_docket(f)} ({f.payload.get('op_auth_type', '').lower()}) suspended {d}: "
+                       f"{reason.split(' - ', 1)[-1]}", "critical" if (today - d).days <= 30 else "high",
+                       _pick(f, *MOTUS_STATUS_FIELDS))
+            s.observed_at = d
+            out.append(s)
+        return out
+
+
+class SuspensionNoticeRule:
+    """FMCSA served notice that the authority will be suspended on a date unless filings (in practice
+    almost always insurance, sometimes BOC-3) are back on file. Resolved once a newer insurance filing shows up."""
+
+    name = "SuspensionNoticeRule"
+    future_days = 60
+
+    def evaluate(self, facts, today):
+        out = []
+        latest = _motus_latest(facts)
+        for f in facts:
+            if f.record_type != "authority_order" or "Involuntary" not in (f.payload.get("order1_type_desc") or ""):
+                continue
+            served, effective = (parse_date(f.payload.get(k)) for k in ("order1_serve_date", "order1_effective_date"))
+            if not served or not effective or not 0 <= (effective - today).days <= self.future_days:
+                continue  # once effective, InsuranceSuspendedRule reports the actual suspension
+            now = latest.get(_auth_key(f))
+            if (now is not None and now.payload.get("op_auth_status") != "Active") or _other_active(f, facts, latest):
+                continue
+            if any(i.record_type == "insurance" and _docket(i) == _docket(f)
+                   and (parse_date(i.payload.get("effective_date")) or date.min) >= served for i in facts):
+                continue
+            s = _draft(self.name, "SUSPENSION_NOTICE", f,
+                       f"FMCSA served a suspension notice on {served}: authority {_docket(f)} will be suspended "
+                       f"{effective} (in {(effective - today).days} days) unless required filings are on file",
+                       "critical", _pick(f, "docket_number", "op_auth_type", "order1_type_desc", "order1_serve_date",
+                                         "order1_effective_date"))
+            s.observed_at = served
+            out.append(s)
+        return out
+
+
+def _money(v) -> float:
+    try:
+        return float(v)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+class InsuranceNeededRule:
+    """Authority application pending, liability (BIPD) insurance required but none filed: FMCSA won't grant it
+    until an insurer files. Applications idle for months are usually abandoned, so only recent ones count."""
+
+    name = "InsuranceNeededRule"
+    days = 180
+
+    def evaluate(self, facts, today):
+        out = []
+        latest = _motus_latest(facts)
+        for f in facts:
+            if (f.record_type != "authority_filings" or f.payload.get("op_auth_status") != "Pending"
+                    or _money(f.payload.get("min_cov_amount")) <= 0 or _money(f.payload.get("bipd_file")) > 0):
+                continue
+            last = latest.get(_auth_key(f))
+            since = last and parse_date(last.payload.get("status_change_date"))
+            if not since or (today - since).days > self.days:
+                continue
+            s = _draft(self.name, "INSURANCE_NEEDED", f,
+                       f"Authority {_docket(f)} ({f.payload.get('op_auth_type', '').lower()}) pending since {since}: "
+                       f"${_money(f.payload.get('min_cov_amount')):,.0f} liability insurance required, none filed yet",
+                       "high", _pick(f, "docket_number", "op_auth_type", "op_auth_status", "min_cov_amount",
+                                     "bipd_file", "cargo_req", "cargo_file", "bond_req", "bond_file"))
+            s.observed_at = since
+            out.append(s)
+        return out
+
+
+INSURANCE_FIELDS = ("docket_number", "mod_col_1", "name_company", "insurance_company_name", "ins_type_desc",
+                    "ins_type_code", "filing_status_reason", "policy_no", "ins_form_code", "effective_date",
                     "cancl_effective_date", "max_cov_amount")
+
+
+def _coverage(f: Fact) -> tuple[str, str]:
+    """Coverage kind, comparable within one system: Motus type code, or the legacy 'BIPD/Primary'-style label."""
+    if "ins_type_code" in f.payload:
+        return "motus", f.payload.get("ins_type_code") or ""
+    return "legacy", (f.payload.get("mod_col_1") or "").split("/")[0]
+
+
+def _insurer(f: Fact) -> str:
+    return f.payload.get("name_company") or f.payload.get("insurance_company_name") or "unknown insurer"
+
+
+def _replaced(f: Fact, facts: list[Fact]) -> bool:
+    """A newer, uncancelled policy of the same coverage on the same docket means the carrier already switched."""
+    start = parse_date(f.payload.get("effective_date")) or date.min
+    return any(o.record_type == "insurance" and o is not f and not o.payload.get("cancl_effective_date")
+               and _docket(o) == _docket(f) and _coverage(o) == _coverage(f)
+               and o.payload.get("policy_no") != f.payload.get("policy_no")
+               and (parse_date(o.payload.get("effective_date")) or date.min) > start for o in facts)
 
 
 class InsuranceCancellationRule:
@@ -269,15 +422,23 @@ class InsuranceCancellationRule:
     def evaluate(self, facts, today):
         out = []
         for f in facts:
-            cancel = parse_date(f.payload.get("cancl_effective_date")) if f.record_type == "insurance" else None
-            if cancel and -self.past_days <= (cancel - today).days <= self.future_days:
-                when = f"in {(cancel - today).days} days" if cancel >= today else f"{(today - cancel).days} days ago"
-                s = _draft(self.name, "INSURANCE_CANCELLATION", f,
-                           f"{f.payload.get('mod_col_1', 'Insurance')} policy with {f.payload.get('name_company')} "
-                           f"has a cancellation effective {cancel} ({when})", "critical" if cancel >= today else "high",
-                           _pick(f, *INSURANCE_FIELDS))
-                s.observed_at = cancel
-                out.append(s)
+            if f.record_type == "insurance":  # legacy active/pending filing with a cancellation date
+                kind = f.payload.get("mod_col_1") or "Insurance"
+            elif f.record_type == "insurance_history":  # Motus: TERM/REPL (replaced) and NAMECHG aren't problems
+                reason, kind = f.payload.get("filing_status_reason"), f.payload.get("ins_type_desc") or "Insurance"
+                if not (reason == "CANCEL" or (not reason and "CANCELLATION" in kind)):
+                    continue
+            else:
+                continue
+            cancel = parse_date(f.payload.get("cancl_effective_date"))
+            if not cancel or not -self.past_days <= (cancel - today).days <= self.future_days or _replaced(f, facts):
+                continue
+            when = f"in {(cancel - today).days} days" if cancel >= today else f"{(today - cancel).days} days ago"
+            s = _draft(self.name, "INSURANCE_CANCELLATION", f,
+                       f"{kind} policy with {_insurer(f)} has a cancellation effective {cancel} ({when})",
+                       "critical" if cancel >= today else "high", _pick(f, *INSURANCE_FIELDS))
+            s.observed_at = cancel
+            out.append(s)
         return out
 
 
@@ -301,7 +462,8 @@ class InsuranceRenewalRule:
     def evaluate(self, facts, today):
         out = []
         for f in facts:
-            if f.record_type != "insurance" or "BIPD" not in (f.payload.get("mod_col_1") or ""):
+            bipd = "BIPD" in (f.payload.get("mod_col_1") or "") or f.payload.get("ins_type_code") == "1"
+            if f.record_type != "insurance" or not bipd:
                 continue
             start = parse_date(f.payload.get("effective_date"))
             if not start or start > today or f.payload.get("cancl_effective_date"):
@@ -309,7 +471,7 @@ class InsuranceRenewalRule:
             nxt = _next_anniversary(start, today)
             if (nxt - today).days <= self.window_days:
                 s = _draft(self.name, "INSURANCE_RENEWAL", f,
-                           f"Liability policy with {f.payload.get('name_company')} effective {start}; estimated annual "
+                           f"Liability policy with {_insurer(f)} effective {start}; estimated annual "
                            f"renewal {nxt} (in {(nxt - today).days} days)", "low",
                            _pick(f, *INSURANCE_FIELDS) | {"estimated_renewal": str(nxt),
                                                           "assumption": "annual policy term"})
@@ -373,7 +535,8 @@ class HiringRule:
 
 RULES = [OutOfServiceRule(), InspectionViolationRule(), RepeatedViolationRule(), HighOutOfServiceRateRule(),
          CrashRule(), NewCarrierRule(), StaleRegistrationRule(), InactiveStatusRule(), ViolationCategoryRule(),
-         AuthorityRevokedRule(), NewAuthorityRule(), InsuranceCancellationRule(), InsuranceRenewalRule(),
+         AuthorityRevokedRule(), NewAuthorityRule(), InsuranceSuspendedRule(), SuspensionNoticeRule(),
+         InsuranceNeededRule(), InsuranceCancellationRule(), InsuranceRenewalRule(),
          HazmatCarrierRule(), CensusChangeRule(), HiringRule()]
 
 

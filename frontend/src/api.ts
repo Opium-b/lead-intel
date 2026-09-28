@@ -15,8 +15,12 @@ export interface LeadRow {
   company_id: number
   name: string
   dot_number: string | null
+  mc_number: string | null
   state: string | null
+  city: string | null
   fleet_size: number | null
+  drivers: number | null
+  added_at: string | null
   score: number
   status: LeadStatus
   signal_count: number
@@ -132,6 +136,8 @@ export const SIGNAL_LABELS: Record<string, string> = {
   INSPECTION_VIOLATION: 'Inspection violation', INACTIVE_STATUS: 'Inactive USDOT status',
   FLEET_GROWTH: 'Growing fleet', FLEET_SHRINK: 'Shrinking fleet', DRIVER_GROWTH: 'Adding drivers',
   HIRING_DRIVERS: 'Hiring drivers', REACTIVATED: 'Reactivated carrier',
+  INSURANCE_SUSPENDED: 'Suspended: no insurance', SUSPENSION_NOTICE: 'Suspension notice',
+  INSURANCE_NEEDED: 'Pending: no insurance filed',
 }
 export const signalLabel = (t: string) => SIGNAL_LABELS[t] ?? t.toLowerCase().replace(/_/g, ' ').replace(/^\w/, (c) => c.toUpperCase())
 export const scoreClass = (s: number) => (s >= 70 ? 'score-high' : s >= 40 ? 'score-mid' : 'score-low')

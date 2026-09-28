@@ -29,6 +29,11 @@ MOTUS_AUTHORITY = "yu5v-wbh6"  # authority status changes (pending, granted, sus
 MOTUS_ORDERS = "wb4f-neki"  # revocation / suspension notices with effective dates
 MOTUS_INSURANCE = "c5y8-a4uz"  # current insurance filings
 MOTUS_INSURANCE_HISTORY = "3uet-3z4i"  # past filings incl. cancellations
+MOTUS_CARRIER = "inys-ebih"  # one row per authority: status + which filings (BIPD, cargo, bond) are on file
+# "All With History" sets lag a few days; these daily-difference sets carry the latest day's changes.
+MOTUS_AUTHORITY_DAILY = "dm5j-zc6c"
+MOTUS_ORDERS_DAILY = "e67p-xyd5"
+MOTUS_CARRIER_DAILY = "nakq-58th"
 HISTORY_DAYS = 365
 NEW_CARRIER_DAYS = 180
 CHUNK = 100  # DOT numbers per IN (...) query
@@ -84,6 +89,7 @@ class RawFmcsa:
     motus_orders: list[dict] = field(default_factory=list)
     motus_insurance: list[dict] = field(default_factory=list)
     motus_insurance_history: list[dict] = field(default_factory=list)
+    motus_carrier: list[dict] = field(default_factory=list)
 
 
 class FmcsaCollector:
@@ -100,13 +106,14 @@ class FmcsaCollector:
         self.new_min_fleet = s.target_new_carrier_min_fleet
         self.active_only = s.target_active_only
 
-    def _in_target(self, r: dict) -> bool:
+    def _in_target(self, r: dict, small_ok: bool = False) -> bool:
+        """small_ok: found via a registration/insurance event, where 1-4 truck carriers are the market too."""
         if self.active_only and r.get("status_code") != "A":
             return False
         units = parse_int(r.get("power_units")) or 0
         added = parse_date(r.get("add_date"))
         is_new = added is not None and (date.today() - added).days <= NEW_CARRIER_DAYS
-        return (self.new_min_fleet if is_new else self.min_fleet) <= units <= self.max_fleet
+        return (self.new_min_fleet if is_new or small_ok else self.min_fleet) <= units <= self.max_fleet
 
     def _get(self, dataset: str, where: str, limit: int | None = None, order: str = ":id",
              select: str | None = None) -> list[dict]:
@@ -147,12 +154,43 @@ class FmcsaCollector:
             f"add_date >= '{since_s}' AND status_code = 'A'" + self._state_filter("phy_state"),
             max(limit // 4, 1), order="add_date DESC", select="dot_number",
         )
-        dots = list(dict.fromkeys(r["dot_number"] for r in flagged + new_carriers if r.get("dot_number", "").isdigit()))
-        log.info("fmcsa discovery: %d flagged inspections, %d new carriers, %d unique DOTs",
-                 len(flagged), len(new_carriers), len(dots))
-        return self.fetch_companies(dots)
 
-    def fetch_companies(self, dots: list[str], apply_target: bool = True) -> RawFmcsa:
+        def motus(where: str, n: int, datasets=(MOTUS_AUTHORITY, MOTUS_AUTHORITY_DAILY),
+                  order: str = "status_change_date DESC") -> list[str]:
+            return [r["usdot_number"] for ds in datasets
+                    for r in self._get(ds, where, n, order=order, select="usdot_number")]
+
+        # Registration decisions (what FMCSA's daily decisions page publishes as letters)
+        granted = motus(f"reason in ('Granted', 'GRANTED') AND status_change_date >= '{since_s}'", limit)
+        pending = motus(f"op_auth_status = 'Pending' AND status_change_date >= '{since_s}'", max(limit // 2, 1))
+        # Insurance problems: suspended for lapsed insurance, suspension notices, cancellations coming up
+        # still-suspended carriers stay leads, so this looks back a fixed window rather than from the cursor
+        suspended = motus("reason like 'Involuntary Suspension%insurance%' AND status_change_date >= "
+                          f"'{date.today() - timedelta(days=60):%Y%m%d}'", max(limit // 2, 1))
+        noticed = motus(f"order1_type_desc like '%Involuntary%' AND order1_serve_date >= '{since_s}'",
+                        max(limit // 2, 1), (MOTUS_ORDERS, MOTUS_ORDERS_DAILY), "order1_serve_date DESC")
+        today = date.today()
+        lo, hi = today - timedelta(days=7), today + timedelta(days=45)
+        # ponytail: no filing date in these sets, so each run re-reads the upcoming window (capped); tracked
+        # companies just get refreshed. A cursor needs a filing date FMCSA doesn't publish.
+        cancelling = motus(f"filing_status_reason = 'CANCEL' AND cancl_effective_date between "
+                           f"'{lo:%Y%m%d}' and '{hi:%Y%m%d}'", max(limit // 2, 1), (MOTUS_INSURANCE_HISTORY,),
+                           "cancl_effective_date")
+        months = sorted({f"{d:%m}/%/{d:%Y}" for d in (lo, today, hi, today + timedelta(days=30))})
+        cancelling += [_unpad(r.get("dot_number")) for r in self._get(
+            INSURANCE, " OR ".join(f"cancl_effective_date like '{m}'" for m in months),
+            max(limit // 2, 1), select="dot_number")]
+
+        small_ok = set(granted + pending + suspended + noticed + cancelling)
+        found = [r["dot_number"] for r in flagged + new_carriers] + granted + pending + suspended + noticed + cancelling
+        dots = list(dict.fromkeys(d for d in found if d and d.isdigit()))
+        log.info("fmcsa discovery: %d flagged inspections, %d new carriers, %d granted, %d pending, "
+                 "%d insurance-suspended, %d suspension notices, %d cancelling insurance, %d unique DOTs",
+                 len(flagged), len(new_carriers), len(granted), len(pending), len(suspended), len(noticed),
+                 len(cancelling), len(dots))
+        return self.fetch_companies(dots, small_ok=small_ok)
+
+    def fetch_companies(self, dots: list[str], apply_target: bool = True, small_ok: set[str] = frozenset()) -> RawFmcsa:
         """Profile + full recent history for specific DOT numbers.
 
         Discovery applies the target profile; refresh doesn't, so tracked companies that change
@@ -174,8 +212,13 @@ class FmcsaCollector:
             raw.violations += self._get(VIOLATIONS, f"dot_number in ({plain})")
             raw.authority += self._get(AUTHORITY, f"dot_number in ({padded})")
             raw.insurance += self._get(INSURANCE, f"dot_number in ({padded})")
-            raw.motus_authority += self._get(MOTUS_AUTHORITY, f"usdot_number in ({plain})")
-            raw.motus_orders += self._get(MOTUS_ORDERS, f"usdot_number in ({plain})")
+            # history first, then the daily set, so the newest copy of a row wins on ingest
+            for ds in (MOTUS_AUTHORITY, MOTUS_AUTHORITY_DAILY):
+                raw.motus_authority += self._get(ds, f"usdot_number in ({plain})")
+            for ds in (MOTUS_ORDERS, MOTUS_ORDERS_DAILY):
+                raw.motus_orders += self._get(ds, f"usdot_number in ({plain})")
+            for ds in (MOTUS_CARRIER, MOTUS_CARRIER_DAILY):
+                raw.motus_carrier += self._get(ds, f"usdot_number in ({plain})")
             raw.motus_insurance += self._get(MOTUS_INSURANCE, f"usdot_number in ({plain})")
             raw.motus_insurance_history += self._get(
                 MOTUS_INSURANCE_HISTORY, f"usdot_number in ({plain}) AND cancl_effective_date >= '{since}'")
@@ -246,7 +289,9 @@ class FmcsaCollector:
                  ("insurance", raw.motus_insurance, MOTUS_INSURANCE, "effective_date",
                   ("docket_number", "policy_no", "ins_form_code", "effective_date")),
                  ("insurance_history", raw.motus_insurance_history, MOTUS_INSURANCE_HISTORY, "cancl_effective_date",
-                  ("docket_number", "policy_no", "ins_form_code", "effective_date", "cancl_effective_date")))
+                  ("docket_number", "policy_no", "ins_form_code", "effective_date", "cancl_effective_date")),
+                 ("authority_filings", raw.motus_carrier, MOTUS_CARRIER, "",
+                  ("docket_number", "op_auth_type")))
         for record_type, rows, dataset, date_key, id_keys in motus:
             for r in rows:
                 dot = r.get("usdot_number", "")

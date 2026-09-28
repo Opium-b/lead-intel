@@ -187,3 +187,53 @@ def test_change_rules():
     hiring = Fact(None, "website", "hiring", "https://a.com/", TODAY - timedelta(days=10), "https://a.com/",
                   {"phrase": "Now hiring CDL drivers", "page": "https://a.com/"})
     assert [s.type for s in detect([hiring], TODAY)] == ["HIRING_DRIVERS"]
+
+
+def test_motus_registration_and_insurance_signals():
+    def f(record_type: str, ext: str, **payload) -> Fact:
+        return Fact(None, "fmcsa", record_type, ext, None, None, {"docket_number": "MC70887654", **payload})
+
+    prop = "Motor Carrier of Property (Except Household Goods)"
+    got = lambda fs: {s.type: s for s in detect(fs, TODAY)}  # noqa: E731
+
+    # granted and still active -> NEW_AUTHORITY
+    granted = f("authority_status", "g", op_auth_type=prop, op_auth_status="Active", reason="Granted",
+                status_change_date=ago(2))
+    assert "NEW_AUTHORITY" in got([granted])
+
+    # pending, $750k BIPD required, nothing filed -> INSURANCE_NEEDED; once filed -> nothing
+    pending = f("authority_status", "p", op_auth_type=prop, op_auth_status="Pending", reason="Published to FMCSA Register",
+                status_change_date=ago(5))
+    filings = f("authority_filings", "c", op_auth_type=prop, op_auth_status="Pending", min_cov_amount="750000.00",
+                bipd_file="0.000000000000000000")
+    assert got([pending, filings])["INSURANCE_NEEDED"].severity == "high"
+    assert "INSURANCE_NEEDED" not in got([pending, Fact(
+        None, "fmcsa", "authority_filings", "c", None, None, {**filings.payload, "bipd_file": "750000.00"})])
+
+    # suspended for lapsed insurance -> INSURANCE_SUSPENDED, unless reinstated afterwards
+    susp = f("authority_status", "s", op_auth_type=prop, op_auth_status="Inactive", status_change_date=ago(1),
+             reason="Involuntary Suspension - insurance cancellation effective; no active insurance meeting minimum "
+                    "coverage on file")
+    assert got([granted, susp])["INSURANCE_SUSPENDED"].severity == "critical"
+    back = f("authority_status", "r", op_auth_type=prop, op_auth_status="Active", status_change_date=ago(0),
+             reason="Reinstated - insurance coverage restored")
+    assert "INSURANCE_SUSPENDED" not in got([granted, susp, back])
+    main_mc = Fact(None, "fmcsa", "authority_filings", "m", None, None, {  # only an old second docket lapsed
+        "docket_number": "MC138732", "op_auth_type": prop, "op_auth_status": "Active", "bipd_file": "1000000.00"})
+    assert "INSURANCE_SUSPENDED" not in got([granted, susp, main_mc])
+
+    # suspension notice with a future effective date -> SUSPENSION_NOTICE, resolved by a newer insurance filing
+    notice = f("authority_order", "n", docket_number="MC-70887654", op_auth_type=prop, order1_serve_date=ago(10),
+               order1_type_desc="Operating Authority Involuntary Suspension Notice", order1_effective_date=ago(-20))
+    assert "SUSPENSION_NOTICE" in got([granted, notice])
+    new_policy = f("insurance", "i2", ins_type_code="1", policy_no="NEW", effective_date=ago(4),
+                   insurance_company_name="NEW INS")
+    assert "SUSPENSION_NOTICE" not in got([granted, notice, new_policy])
+
+    # Motus cancellations: CANCEL fires, TERM/REPL (replaced) doesn't, and a newer same-coverage policy clears it
+    cancel = f("insurance_history", "h1", filing_status_reason="CANCEL", ins_type_desc="BIPD", ins_type_code="1",
+               policy_no="OLD", effective_date=ago(300), cancl_effective_date=ago(-15), insurance_company_name="OLD INS")
+    assert "OLD INS" in got([cancel])["INSURANCE_CANCELLATION"].description
+    assert "INSURANCE_CANCELLATION" not in got([Fact(None, "fmcsa", "insurance_history", "h2", None, None,
+                                                     {**cancel.payload, "filing_status_reason": "TERM/REPL"})])
+    assert "INSURANCE_CANCELLATION" not in got([cancel, new_policy])

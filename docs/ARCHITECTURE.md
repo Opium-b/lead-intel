@@ -108,7 +108,15 @@ class Collector(Protocol):
   - `fx4q-ay7w` Vehicle Inspection File: inspections with violations/OOS since the cursor. This is the **discovery driver**: problem-first, not "scrape everyone".
   - `az4n-8mr2` Company Census: company profile for the discovered DOTs, plus a "new carriers" feed (`add_date ≥ cursor`).
   - `aayw-vxb3` Crash File: crashes for discovered DOTs (last 12 months).
-  - Later: `9mw4-x3tu` AuthHist (MC numbers, authority grants/revocations), `sa6p-acbp` Revocations.
+  - `9mw4-x3tu` AuthHist and `qh9u-swkp` ActPendInsur (legacy L&I system): MC dockets, grants/revocations, insurance on file.
+  - **Motus** (FMCSA's new registration system; new carriers exist only here). "All With History" sets lag a few
+    days, so each is paired with its daily-difference set: AuthHist `yu5v-wbh6`+`dm5j-zc6c`, RevokeSuspend
+    `wb4f-neki`+`e67p-xyd5`, Carrier `inys-ebih`+`nakq-58th` (which filings are on file), plus Insur `c5y8-a4uz`
+    and InsHist `3uet-3z4i`. These are the structured form of FMCSA's daily registration-decision letters.
+  - Discovery per run, besides inspections and new census adds: authorities **granted** since the cursor, authorities
+    turned **pending**, **suspended for lapsed insurance** (fixed 60-day window: still-suspended carriers stay leads),
+    **suspension notices** served, and insurance **cancellations** effective between 7 days ago and 45 days ahead
+    (Motus `CANCEL` rows and legacy pending cancellations). Carriers found this way may have 1+ trucks.
 - The cursor is a date with an N-day overlap, stored in `collector_runs`. Overlap is safe because every write is an upsert.
 - Etiquette: page size ≤ 1000, timeouts, retry with backoff, identifying User-Agent.
 
