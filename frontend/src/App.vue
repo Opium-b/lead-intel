@@ -17,6 +17,7 @@ onUnmounted(() => window.removeEventListener('leadintel:logout', onLogout))
     <nav v-if="token">
       <RouterLink to="/" exact-active-class="active">Overview</RouterLink>
       <RouterLink to="/leads" active-class="active">Leads</RouterLink>
+      <RouterLink to="/analytics" active-class="active">Analytics</RouterLink>
     </nav>
     <button v-if="token" class="link" @click="logout">Sign out</button>
   </header>

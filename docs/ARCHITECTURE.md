@@ -170,6 +170,12 @@ No guessing: nothing is stored that was not observed, and every contact records 
 - Runs after enrichment in every collector run, for leads ≥ `AI_MIN_SCORE` (60), best first, at most `AI_LIMIT` (25) calls per run; also `cli summarize` and `POST /api/leads/{id}/summary` (the dashboard's Regenerate button). Off unless `ANTHROPIC_API_KEY` is set.
 - Refusals and truncated answers are skipped, not stored; API errors are logged and never fail a run. Roughly 1.2k input tokens per lead, about $0.02–0.05 each.
 
+## 8c. Analytics (phase 6)
+
+`app/analytics.py` → `GET /api/stats/analytics` → the dashboard's Analytics page. Outcomes come from lead statuses: won = QUALIFIED/CONVERTED, lost = DECLINED/DISQUALIFIED, worked = anything past NEW/REVIEWED.
+- Funnel by status; win rate and **lift** per signal type (Laplace-smoothed win rate with the signal ÷ overall, so 1/1 isn't read as certain); win rate by score band (does the score predict wins?); attempts / no-answer / won / lost per contact channel from the contact log.
+- Weight suggestions for enabled, positive `signal_type` rules once ≥ 10 leads are decided and ≥ 5 carry the signal: `suggested = round(weight × lift / 5) × 5`. They are advice; the page's Apply button calls `PUT /api/scoring-rules/{key}` then `POST /api/admin/reprocess`.
+
 ## 9. Telegram architecture (phase 3)
 
 `app/notify.py`: `TelegramNotifier` (Bot API `sendMessage`, HTML parse mode, every value escaped) and `notify_qualified_leads()`.
@@ -213,7 +219,7 @@ Scheduling uses host cron, or a compose `scheduler` service looping `python -m a
 | 3 Telegram | notifier, threshold, dedupe | one message per qualifying lead, disable-able |
 | 4 More rules/sources | AuthHist (MC, revocations), fleet change & status change detection (snapshot diff), hiring signals | ✅ change + hiring signals scored and pitched |
 | 5 AI assist | evidence summaries stored as `origin='ai'`, clearly labeled | ✅ `leads.ai_summary` briefs (see §8b) |
-| 6 Analytics | conversion by signal type, weight tuning | |
+| 6 Analytics | conversion by signal type, weight tuning | ✅ `app/analytics.py`, `GET /api/stats/analytics`, Analytics page |
 
 ## 14. Testing strategy
 

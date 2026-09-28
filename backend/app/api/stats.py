@@ -4,6 +4,7 @@ from fastapi import APIRouter, Depends
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
+from app.analytics import analytics
 from app.config import get_settings
 from app.db import get_db
 from app.models import Company, CollectorRun, Lead, LeadEvent, LeadStatus, Signal
@@ -36,3 +37,8 @@ def overview(db: Session = Depends(get_db)):
         "last_run": last_run and {"id": last_run.id, "status": last_run.status, "started_at": last_run.started_at,
                                   "finished_at": last_run.finished_at, "stats": last_run.stats},
     }
+
+
+@router.get("/analytics")
+def get_analytics(db: Session = Depends(get_db)):
+    return analytics(db)

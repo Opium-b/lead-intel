@@ -53,6 +53,16 @@ export interface Company {
   drivers: number | null; operating_status: string | null; website: string | null; added_at: string | null
   attributes: Record<string, string>
 }
+export interface Rates { leads: number; worked: number; won: number; lost: number; win_rate: number | null }
+export interface Analytics {
+  funnel: Record<string, number>
+  totals: Rates
+  by_signal: (Rates & { type: string; lift: number })[]
+  by_score_band: (Rates & { band: string })[]
+  by_channel: { channel: string; attempts: number; no_answer: number; won: number; lost: number }[]
+  suggestions: { key: string; label: string; type: string; current: number; suggested: number; reason: string }[]
+  thresholds: { min_decided_with_signal: number; min_decided_total: number }
+}
 export interface AiBrief { summary: string; talking_points: string[]; opener: string; model: string }
 export interface LeadDetail {
   id: number; score: number; score_breakdown: BreakdownItem[]; pitch: Pitch[]; status: LeadStatus
@@ -102,6 +112,9 @@ export const api = {
   lead: (id: number) => request<LeadDetail>('GET', `/leads/${id}`),
   updateLead: (id: number, body: { status: LeadStatus; channel?: Channel; note?: string }) =>
     request<LeadDetail>('PATCH', `/leads/${id}`, body),
+  analytics: () => request<Analytics>('GET', '/stats/analytics'),
+  updateRule: (key: string, weight: number) => request<unknown>('PUT', `/scoring-rules/${key}`, { weight }),
+  reprocess: () => request<unknown>('POST', '/admin/reprocess'),
   regenerateBrief: (id: number) => request<LeadDetail>('POST', `/leads/${id}/summary`),
   addNote: (id: number, text: string) => request<LeadEvent>('POST', `/leads/${id}/notes`, { text }),
 }
