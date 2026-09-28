@@ -12,6 +12,7 @@ from app import scoring
 from app.collectors import COLLECTORS
 from app.collectors.base import EventRecord, NormalizedBatch
 from app.config import get_settings
+from app.ai import summarize_leads
 from app.enrichment import enrich_leads
 from app.notify import notify_qualified_leads
 from app.models import Company, CollectorRun, Contact, Lead, LeadEvent, Signal, SourceRecord
@@ -188,6 +189,11 @@ def _run(db: Session, source: str, stats: dict, collect) -> CollectorRun:
         except Exception:  # enrichment is best-effort; collection already succeeded
             db.rollback()
             log.exception("collector run %d: enrichment failed", run.id)
+        try:  # after enrichment (fresh facts), before notifications (alerts can carry the brief)
+            result["ai"] = summarize_leads(db)
+        except Exception:
+            db.rollback()
+            log.exception("collector run %d: AI briefs failed", run.id)
         try:  # after enrichment, so messages include the contacts just found
             result["notifications"] = notify_qualified_leads(db)
         except Exception:

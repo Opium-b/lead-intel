@@ -3,6 +3,7 @@
   python -m app.cli refresh                                                   # re-fetch tracked companies
   python -m app.cli enrich [--limit 100]                                      # websites + contacts for due leads
   python -m app.cli notify [--test]                                           # send pending Telegram alerts
+  python -m app.cli summarize [--limit 25]                                   # AI briefs for leads whose facts changed
   python -m app.cli reprocess                                                 # re-derive signals/scores
   python -m app.cli reset-scoring                                             # restore default weights
 """
@@ -12,6 +13,7 @@ from datetime import date
 
 from app.db import SessionLocal
 from app import scoring
+from app.ai import summarize_leads
 from app.config import get_settings
 from app.enrichment import enrich_leads
 from app.notify import TelegramNotifier, notify_qualified_leads
@@ -32,6 +34,8 @@ def main() -> None:
     e.add_argument("--limit", type=int)
     n = sub.add_parser("notify")
     n.add_argument("--test", action="store_true", help="send one test message to check the bot setup")
+    a = sub.add_parser("summarize")
+    a.add_argument("--limit", type=int)
     sub.add_parser("reprocess")
     sub.add_parser("reset-scoring")
     args = p.parse_args()
@@ -52,6 +56,9 @@ def main() -> None:
                 logging.info("test message sent")
             else:
                 notify_qualified_leads(db)
+        elif args.cmd == "summarize":
+            if summarize_leads(db, limit=args.limit) is None:
+                raise SystemExit("Set ANTHROPIC_API_KEY in .env first")
         elif args.cmd == "reset-scoring":
             scoring.reset_rules(db)
             logging.info("scoring rules reset to defaults; run 'reprocess' to apply")

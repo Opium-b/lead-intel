@@ -125,6 +125,9 @@ class Lead(TimestampMixin, Base):
     status: Mapped[str] = mapped_column(String(16), default=LeadStatus.NEW, index=True)
     scored_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     notified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # AI interpretation (app/ai.py), kept apart from facts: {summary, talking_points, opener, model, input_hash}
+    ai_summary: Mapped[dict | None] = mapped_column(JSONB)
+    ai_summary_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
     company: Mapped[Company] = relationship(back_populates="lead")
     events: Mapped[list["LeadEvent"]] = relationship(back_populates="lead", order_by="LeadEvent.created_at.desc()")

@@ -163,6 +163,13 @@ Every draft carries `evidence` (the exact fields used) plus `source_url` and `ob
 
 No guessing: nothing is stored that was not observed, and every contact records where it was seen. Pages are capped at 2 MB, requests time out after 10 s, and private/loopback addresses are refused. A failed company is not marked enriched, so it is retried next run; a new contact adds an `ENRICHED` lead event and triggers a re-score.
 
+## 8b. AI briefs (phase 5)
+
+`app/ai.py`: one Claude call (`claude-opus-5`, structured JSON output, medium effort, server-side refusal fallback) per lead → `{summary, talking_points, opener}` stored in `leads.ai_summary` with the answering model and an input hash. It is interpretation, never a fact: it doesn't create signals or change scores, and the dashboard and Telegram label it as AI.
+- Input is built only from stored facts (company profile, score reasons, matched services, top 25 signals) and the registered contact person's name. **Phone numbers and emails are never sent.** The prompt uses absolute dates only, so its hash changes only when the facts do, and unchanged leads are never re-sent.
+- Runs after enrichment in every collector run, for leads ≥ `AI_MIN_SCORE` (60), best first, at most `AI_LIMIT` (25) calls per run; also `cli summarize` and `POST /api/leads/{id}/summary` (the dashboard's Regenerate button). Off unless `ANTHROPIC_API_KEY` is set.
+- Refusals and truncated answers are skipped, not stored; API errors are logged and never fail a run. Roughly 1.2k input tokens per lead, about $0.02–0.05 each.
+
 ## 9. Telegram architecture (phase 3)
 
 `app/notify.py`: `TelegramNotifier` (Bot API `sendMessage`, HTML parse mode, every value escaped) and `notify_qualified_leads()`.
@@ -205,7 +212,7 @@ Scheduling uses host cron, or a compose `scheduler` service looping `python -m a
 | 2 Enrichment | email-domain + website providers, robots-aware | contacts with sources on qualifying leads |
 | 3 Telegram | notifier, threshold, dedupe | one message per qualifying lead, disable-able |
 | 4 More rules/sources | AuthHist (MC, revocations), fleet change & status change detection (snapshot diff), hiring signals | ✅ change + hiring signals scored and pitched |
-| 5 AI assist | evidence summaries stored as `origin='ai'`, clearly labeled | |
+| 5 AI assist | evidence summaries stored as `origin='ai'`, clearly labeled | ✅ `leads.ai_summary` briefs (see §8b) |
 | 6 Analytics | conversion by signal type, weight tuning | |
 
 ## 14. Testing strategy

@@ -11,6 +11,11 @@ const PREVIEW = 3
 
 const upd = reactive<{ status: LeadStatus; channel: Channel | ''; note: string }>({ status: 'NEW', channel: '', note: '' })
 const saving = ref(false)
+const briefing = ref(false)
+async function regenerateBrief() {
+  briefing.value = true
+  try { lead.value = await api.regenerateBrief(props.id) } catch (err) { error.value = String(err) } finally { briefing.value = false }
+}
 const load = async () => {
   try { lead.value = await api.lead(props.id); upd.status = lead.value.status } catch (e) { error.value = String(e) }
 }
@@ -66,6 +71,18 @@ const evidenceValue = (v: unknown) => (Array.isArray(v) ? v.join(', ') : String(
         <span :class="['status', lead.status.toLowerCase()]">{{ statusLabel(lead.status) }}</span>
       </div>
     </header>
+
+    <section class="card ai-brief">
+      <h2>🤖 AI brief <span class="muted small">— written by Claude from the facts below; check before you rely on it</span></h2>
+      <template v-if="lead.ai_summary">
+        <p>{{ lead.ai_summary.summary }}</p>
+        <ul><li v-for="(t, i) in lead.ai_summary.talking_points" :key="i">{{ t }}</li></ul>
+        <p><b>Opener:</b> “{{ lead.ai_summary.opener }}”</p>
+        <p class="muted small">{{ lead.ai_summary.model }} · {{ lead.ai_summary_at ? fmtDateTime(lead.ai_summary_at) : '' }}</p>
+      </template>
+      <p v-else class="muted">No brief yet.</p>
+      <button class="link" :disabled="briefing" @click="regenerateBrief">{{ briefing ? 'Writing…' : lead.ai_summary ? 'Regenerate' : 'Write brief' }}</button>
+    </section>
 
     <section class="card">
       <h2>Log contact</h2>

@@ -135,3 +135,5 @@ summary { cursor: pointer; color: var(--muted); }
 .status.declined, .status.disqualified { background: var(--high-bg); color: var(--high); }
 .status.contacted, .status.qualified { background: var(--ok-bg); color: var(--ok); }
 .status.converted { background: var(--accent-soft); color: var(--accent); }
+.ai-brief { border-left: 3px solid var(--accent); }
+.ai-brief ul { margin: 0 0 8px; padding-left: 20px; }

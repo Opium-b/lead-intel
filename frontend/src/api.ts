@@ -53,9 +53,11 @@ export interface Company {
   drivers: number | null; operating_status: string | null; website: string | null; added_at: string | null
   attributes: Record<string, string>
 }
+export interface AiBrief { summary: string; talking_points: string[]; opener: string; model: string }
 export interface LeadDetail {
   id: number; score: number; score_breakdown: BreakdownItem[]; pitch: Pitch[]; status: LeadStatus
   scored_at: string | null; notified_at: string | null; created_at: string; updated_at: string
+  ai_summary: AiBrief | null; ai_summary_at: string | null
   company: Company; signals: Signal[]; contacts: Contact[]; events: LeadEvent[]
 }
 export interface Overview {
@@ -100,6 +102,7 @@ export const api = {
   lead: (id: number) => request<LeadDetail>('GET', `/leads/${id}`),
   updateLead: (id: number, body: { status: LeadStatus; channel?: Channel; note?: string }) =>
     request<LeadDetail>('PATCH', `/leads/${id}`, body),
+  regenerateBrief: (id: number) => request<LeadDetail>('POST', `/leads/${id}/summary`),
   addNote: (id: number, text: string) => request<LeadEvent>('POST', `/leads/${id}/notes`, { text }),
 }
 

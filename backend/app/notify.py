@@ -61,6 +61,8 @@ def format_lead(lead: Lead, dashboard: str) -> str:
         "<b>Why:</b>",
         *[f"• {e(b['label'])} — {e(b['reason'])}" for b in lead.score_breakdown[:4]],
     ]
+    if lead.ai_summary:
+        lines += ["", f"🤖 <i>AI brief (check the facts):</i> {e(lead.ai_summary['summary'])}"]
     if lead.service_lines:
         lines += ["", "<b>Pitch:</b> " + e(", ".join(SERVICE_LINES[k][0] for k in lead.service_lines[:3] if k in SERVICE_LINES))]
     phone = first("phone")

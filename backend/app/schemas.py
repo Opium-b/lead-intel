@@ -103,6 +103,8 @@ class LeadDetail(ORM):
     status: str
     scored_at: datetime | None
     notified_at: datetime | None
+    ai_summary: dict[str, Any] | None
+    ai_summary_at: datetime | None
     created_at: datetime
     updated_at: datetime
     company: CompanyOut

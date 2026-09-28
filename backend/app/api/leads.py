@@ -1,11 +1,14 @@
 from typing import Literal
 
+import anthropic
+
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
 from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session, selectinload
 
 from app.db import SessionLocal, get_db
 from app.models import Company, Contact, Lead, LeadEvent, LeadStatus, Signal
+from app.ai import default_summarizer, new_stats, summarize_lead
 from app.notify import send_lead_update
 from app.services_catalog import SERVICE_LINES, pitch
 from app.schemas import EventOut, LeadDetail, LeadPage, LeadRow, LeadUpdate, NoteIn
@@ -118,6 +121,23 @@ def update_lead(lead_id: int, body: LeadUpdate, tasks: BackgroundTasks, db: Sess
         return get_lead(lead_id, db)
     db.commit()
     tasks.add_task(_telegram_update, lead_id)
+    db.expire_all()
+    return get_lead(lead_id, db)
+
+
+@router.post("/{lead_id}/summary", response_model=LeadDetail)
+def regenerate_summary(lead_id: int, db: Session = Depends(get_db)):
+    """(Re)write the AI brief for one lead now. Takes a few seconds; costs one API call."""
+    summarizer = default_summarizer()
+    if summarizer is None:
+        raise HTTPException(503, "AI briefs are off: set ANTHROPIC_API_KEY in backend/.env")
+    stats = new_stats()
+    try:
+        summarize_lead(db, _get_lead(db, lead_id), summarizer, stats, force=True)
+    except anthropic.APIError as e:
+        raise HTTPException(502, f"Claude API error: {type(e).__name__}")
+    if not stats["summarized"]:
+        raise HTTPException(502, "Claude declined or didn't finish this brief; try again later")
     db.expire_all()
     return get_lead(lead_id, db)
 

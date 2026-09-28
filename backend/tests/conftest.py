@@ -2,7 +2,7 @@ import os
 
 os.environ["DATABASE_URL"] = os.environ.get("TEST_DATABASE_URL", "postgresql+psycopg://localhost/leadintel_test")
 os.environ.setdefault("API_SECRET", "test-secret-test-secret")
-for key in ("TELEGRAM_BOT_TOKEN", "TELEGRAM_CHAT_ID", "BRAVE_API_KEY"):
+for key in ("TELEGRAM_BOT_TOKEN", "TELEGRAM_CHAT_ID", "BRAVE_API_KEY", "ANTHROPIC_API_KEY"):
     os.environ[key] = ""
 
 import pytest  # noqa: E402

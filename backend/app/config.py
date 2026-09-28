@@ -30,6 +30,11 @@ class Settings(BaseSettings):
     enrich_limit: int = 100  # companies per run
     brave_api_key: str | None = None  # optional: web search when the registered email is free-mail
 
+    # Phase 5 AI briefs (Claude). Off unless a key is set; each brief costs roughly $0.02-0.05.
+    anthropic_api_key: str | None = None
+    ai_min_score: int = 60
+    ai_limit: int = 25  # API calls per run
+
     telegram_bot_token: str | None = None
     telegram_chat_id: str | None = None
     notify_min_score: int = 70
