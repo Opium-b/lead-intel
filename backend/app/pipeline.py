@@ -10,7 +10,7 @@ from sqlalchemy.orm import Session
 
 from app import scoring
 from app.collectors import COLLECTORS
-from app.collectors.base import NormalizedBatch
+from app.collectors.base import EventRecord, NormalizedBatch
 from app.config import get_settings
 from app.enrichment import enrich_leads
 from app.notify import notify_qualified_leads
@@ -32,8 +32,36 @@ def _hash(payload: dict) -> str:
     return hashlib.sha256(json.dumps(payload, sort_keys=True, default=str).encode()).hexdigest()
 
 
+TRACKED_CENSUS = ("power_units", "total_drivers", "status_code")
+
+
+def census_changes(db: Session, batch: NormalizedBatch) -> list[EventRecord]:
+    """Diff incoming census rows against the stored snapshot: each changed tracked field becomes a dated fact.
+
+    The census row itself is overwritten on upsert, so this is the only place the old value is still visible.
+    """
+    incoming = {e.external_id: e for e in batch.events if e.record_type == "census"}
+    if not incoming:
+        return []
+    stored = dict(db.execute(select(SourceRecord.external_id, SourceRecord.payload).where(
+        SourceRecord.source == "fmcsa", SourceRecord.record_type == "census",
+        SourceRecord.external_id.in_(list(incoming)))).all())
+    out = []
+    for dot, old in stored.items():
+        new = incoming[dot]
+        for field in TRACKED_CENSUS:
+            before, after = old.get(field), new.payload.get(field)
+            if before is not None and after is not None and before != after:
+                out.append(EventRecord(new.source, "census_change", f"{dot}:{field}:{before}->{after}", dot,
+                                       new.observed_at, new.source_url, {
+                                           "field": field, "from": before, "to": after,
+                                           "mcs150_date": new.payload.get("mcs150_date")}))
+    return out
+
+
 def ingest(db: Session, batch: NormalizedBatch) -> list[int]:
     """Upsert companies, contacts and raw facts. Returns ids of touched companies."""
+    batch.events = batch.events + census_changes(db, batch)
     ids: dict[str, int] = {}
     for c in batch.companies:
         values = dict(dot_number=c.dot_number, mc_number=c.mc_number, name=c.name, dba_name=c.dba_name,

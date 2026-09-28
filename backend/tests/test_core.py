@@ -158,3 +158,32 @@ def test_pipeline_is_idempotent(db):
     process_companies(db, ingest(db, b), TODAY)
     assert count(Signal) == n_signals + 1
     assert "SIGNALS_ADDED" in {e.event_type for e in db.scalars(select(LeadEvent))}
+
+
+def test_census_changes_become_signals(db):
+    process_companies(db, ingest(db, batch()), TODAY)
+    grown = RawFmcsa(census=[CENSUS | {"power_units": "20", "total_drivers": "22"}])
+    for _ in range(2):  # same snapshot twice -> one change record per field
+        process_companies(db, ingest(db, COLLECTOR.normalize(grown)), TODAY)
+    changes = db.scalars(select(SourceRecord).where(SourceRecord.record_type == "census_change")).all()
+    assert sorted((c.payload["field"], c.payload["from"], c.payload["to"]) for c in changes) == [
+        ("power_units", "12", "20"), ("total_drivers", "14", "22")]
+    types = set(db.scalars(select(Signal.type)))
+    assert {"FLEET_GROWTH", "DRIVER_GROWTH"} <= types
+
+
+def change(field: str, old: str, new: str, days_ago: int = 5) -> Fact:
+    return Fact(None, "fmcsa", "census_change", f"123:{field}:{old}->{new}", TODAY - timedelta(days=days_ago),
+                "https://x", {"field": field, "from": old, "to": new})
+
+
+def test_change_rules():
+    sigs = {s.type: s for s in detect([change("power_units", "10", "12"), change("total_drivers", "10", "11"),
+                                       change("status_code", "I", "A")], TODAY)}
+    assert set(sigs) == {"FLEET_GROWTH", "REACTIVATED"}  # +1 driver is noise
+    assert sigs["FLEET_GROWTH"].evidence == {"field": "power_units", "from": "10", "to": "12"}
+    assert {s.type for s in detect([change("power_units", "40", "30")], TODAY)} == {"FLEET_SHRINK"}
+    assert detect([change("power_units", "10", "20", days_ago=400)], TODAY) == []  # older than 12 months
+    hiring = Fact(None, "website", "hiring", "https://a.com/", TODAY - timedelta(days=10), "https://a.com/",
+                  {"phrase": "Now hiring CDL drivers", "page": "https://a.com/"})
+    assert [s.type for s in detect([hiring], TODAY)] == ["HIRING_DRIVERS"]

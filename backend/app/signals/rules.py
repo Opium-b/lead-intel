@@ -331,10 +331,50 @@ class HazmatCarrierRule:
         return [s]
 
 
+class CensusChangeRule:
+    """Changes between two census snapshots (see pipeline.census_changes). Small count moves are noise."""
+
+    name = "CensusChangeRule"
+    min_delta, min_ratio = 2, 0.10
+
+    def evaluate(self, facts, today):
+        out = []
+        for f in _recent(facts, "census_change", today):
+            field, old, new = f.payload.get("field"), f.payload.get("from"), f.payload.get("to")
+            evidence = _pick(f, "field", "from", "to")
+            if field == "status_code":
+                if new == "A" and old != "A":
+                    out.append(_draft(self.name, "REACTIVATED", f, f"USDOT status changed '{old}' → active", "medium", evidence))
+                continue
+            before, after = parse_int(old), parse_int(new)
+            if before is None or after is None or abs(after - before) < max(self.min_delta, before * self.min_ratio):
+                continue
+            what = "power units" if field == "power_units" else "drivers"
+            desc = f"{what.capitalize()} {'grew' if after > before else 'dropped'} {before} → {after} (FMCSA registration)"
+            if field == "power_units":
+                out.append(_draft(self.name, "FLEET_GROWTH" if after > before else "FLEET_SHRINK", f, desc,
+                                  "medium" if after > before else "low", evidence))
+            elif field == "total_drivers" and after > before:
+                out.append(_draft(self.name, "DRIVER_GROWTH", f, desc, "medium", evidence))
+        return out
+
+
+class HiringRule:
+    """Hiring language on the company's own website (recorded during enrichment)."""
+
+    name = "HiringRule"
+    days = 90
+
+    def evaluate(self, facts, today):
+        return [_draft(self.name, "HIRING_DRIVERS", f, f"Website says “{f.payload.get('phrase')}”", "medium",
+                       _pick(f, "phrase", "page"))
+                for f in facts if f.record_type == "hiring" and f.observed_at and (today - f.observed_at).days <= self.days]
+
+
 RULES = [OutOfServiceRule(), InspectionViolationRule(), RepeatedViolationRule(), HighOutOfServiceRateRule(),
          CrashRule(), NewCarrierRule(), StaleRegistrationRule(), InactiveStatusRule(), ViolationCategoryRule(),
          AuthorityRevokedRule(), NewAuthorityRule(), InsuranceCancellationRule(), InsuranceRenewalRule(),
-         HazmatCarrierRule()]
+         HazmatCarrierRule(), CensusChangeRule(), HiringRule()]
 
 
 def detect(facts: list[Fact], today: date) -> list[SignalDraft]:

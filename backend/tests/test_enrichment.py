@@ -2,7 +2,7 @@ import httpx
 from sqlalchemy import func, select
 
 from app.enrichment import Enricher, enrich_leads
-from app.models import Company, Contact, LeadEvent
+from app.models import Company, Contact, LeadEvent, Signal
 from app.pipeline import ingest, process_companies
 from tests.test_core import TODAY, batch
 
@@ -13,6 +13,7 @@ HOME = """<html><body><h1>Acme Freight</h1>
 <a href="https://www.facebook.com/sharer/sharer.php?u=x">share</a>
 <p>Sales: Sales@AcmeFreight.com · (214) 555-0177 · <img src="logo@2x.png"> hero@2x.png</p>
 <a href="https://wa.me/12145550188">WhatsApp</a>
+<p>Now hiring CDL-A drivers — great home time!</p>
 <a href="/contact">Contact</a></body></html>"""
 CONTACT = '<p>Dispatch: <a href="tel:214.555.0199">214.555.0199</a></p><form><textarea name="m"></textarea></form>'
 
@@ -35,8 +36,9 @@ def company(**kw) -> Company:
 def test_website_from_registered_email_domain():
     seen: list[str] = []
     web = fake_web({"acmefreight.com/": (200, HOME), "acmefreight.com/contact": (200, CONTACT)}, seen)
-    site, contacts = Enricher(web).enrich(company(), ["ops@acmefreight.com"], [])
+    site, contacts, hiring = Enricher(web).enrich(company(), ["ops@acmefreight.com"], [])
     assert site == "https://acmefreight.com/"
+    assert hiring == [("https://acmefreight.com/", "Now hiring CDL-A drivers")]
     found = {(c.type, c.value, c.source, c.source_url) for c in contacts}
     assert found == {
         ("website", "https://acmefreight.com/", "email_domain", "https://acmefreight.com/"),
@@ -53,11 +55,11 @@ def test_website_from_registered_email_domain():
 
 def test_free_mail_and_robots_disallow():
     seen: list[str] = []
-    assert Enricher(fake_web({}, seen)).enrich(company(), ["acme@gmail.com"], []) == (None, [])
+    assert Enricher(fake_web({}, seen)).enrich(company(), ["acme@gmail.com"], []) == (None, [], [])
     assert seen == []  # no search key, free-mail domain: nothing fetched
 
     web = fake_web({"acmefreight.com/robots.txt": (200, "User-agent: *\nDisallow: /"), "acmefreight.com/": (200, HOME)}, seen)
-    site, contacts = Enricher(web).enrich(company(), ["ops@acmefreight.com"], [])
+    site, contacts, _ = Enricher(web).enrich(company(), ["ops@acmefreight.com"], [])
     assert site == "https://acmefreight.com/" and [c.type for c in contacts] == ["website"]
     assert "acmefreight.com/" not in seen  # site exists (robots answered) but pages were not read
 
@@ -69,7 +71,7 @@ def test_search_result_needs_dot_or_phone_on_page():
         "other-acme.com/": (200, "<p>Acme Freight, Ohio. USDOT 99999</p>"),
         "acme-trucking.com/": (200, "<p>Acme Freight LLC · USDOT #123 · (214) 555-0100</p>"),
     }, seen)
-    site, contacts = Enricher(web, search_key="key").enrich(company(), ["acme@gmail.com"], ["2145550100"])
+    site, contacts, _ = Enricher(web, search_key="key").enrich(company(), ["acme@gmail.com"], ["2145550100"])
     assert site == "https://acme-trucking.com/"
     assert ("website", "web_search") in {(c.type, c.source) for c in contacts}
     assert not any("yelp.com" in s for s in seen)  # directories are skipped without fetching
@@ -80,6 +82,7 @@ def test_enrich_leads_is_idempotent_and_respects_ttl(db):
     web = fake_web({"acmefreight.com/": (200, HOME), "acmefreight.com/contact": (200, CONTACT)}, [])
     first = enrich_leads(db, Enricher(web))
     assert first["enriched"] == 1 and first["contacts"] == 8
+    assert "HIRING_DRIVERS" in set(db.scalars(select(Signal.type)))  # hiring page became a signal
     assert enrich_leads(db, Enricher(web))["enriched"] == 0  # within TTL: skipped
 
     db.execute(Company.__table__.update().values(enriched_at=None))

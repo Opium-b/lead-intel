@@ -130,6 +130,11 @@ Registry list in `signals/rules.py`. V1 rules:
 | NewCarrierRule | `NEW_CARRIER` | census `add_date` within 180d | low |
 | StaleRegistrationRule | `STALE_MCS150` | MCS-150 last updated > 24 months ago (biennial update is required) | medium |
 | InactiveStatusRule | `INACTIVE_STATUS` | census status ≠ active | medium |
+| CensusChangeRule | `FLEET_GROWTH` / `FLEET_SHRINK` / `DRIVER_GROWTH` / `REACTIVATED` | a `census_change` fact in 365d: power units or drivers moved by ≥ max(2, 10%), or status → active | medium/low |
+| HiringRule | `HIRING_DRIVERS` | driver-hiring language on the company's own website in the last 90d | medium |
+
+**Change detection:** census rows are overwritten on upsert, so `pipeline.census_changes()` diffs each incoming row against the stored one first and records every change of `power_units`, `total_drivers` or `status_code` as a `census_change` source record (`<dot>:<field>:<from>-><to>`). Signals appear only as carriers file MCS-150 updates, so they accumulate over time.
+**Hiring:** enrichment records one `website`/`hiring` source record per company (page + phrase). Job boards are not scraped (ToS).
 
 Every draft carries `evidence` (the exact fields used) plus `source_url` and `observed_at`. The `dedupe_key` is derived from the record (for example `OUT_OF_SERVICE:insp:79765752`), so re-running rules never duplicates signals.
 
@@ -199,7 +204,7 @@ Scheduling uses host cron, or a compose `scheduler` service looping `python -m a
 | **1 Core pipeline** | schema + migrations, FMCSA collector, 7 signal rules, scoring engine, leads, API, dashboard (3 pages) | `cli run` on live FMCSA data produces scored leads visible with evidence in UI |
 | 2 Enrichment | email-domain + website providers, robots-aware | contacts with sources on qualifying leads |
 | 3 Telegram | notifier, threshold, dedupe | one message per qualifying lead, disable-able |
-| 4 More rules/sources | AuthHist (MC, revocations), fleet change & status change detection (snapshot diff), hiring signals | |
+| 4 More rules/sources | AuthHist (MC, revocations), fleet change & status change detection (snapshot diff), hiring signals | ✅ change + hiring signals scored and pitched |
 | 5 AI assist | evidence summaries stored as `origin='ai'`, clearly labeled | |
 | 6 Analytics | conversion by signal type, weight tuning | |
 

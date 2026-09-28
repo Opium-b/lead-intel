@@ -114,6 +114,8 @@ export const SIGNAL_LABELS: Record<string, string> = {
   UNSAFE_DRIVING: 'Unsafe driving', DRIVER_FITNESS: 'Driver fitness violations', DRUG_ALCOHOL: 'Drug & alcohol violations',
   HAZMAT_VIOLATIONS: 'Hazmat violations', HAZMAT_CARRIER: 'Hazmat carrier', STALE_MCS150: 'Overdue MCS-150 update',
   INSPECTION_VIOLATION: 'Inspection violation', INACTIVE_STATUS: 'Inactive USDOT status',
+  FLEET_GROWTH: 'Growing fleet', FLEET_SHRINK: 'Shrinking fleet', DRIVER_GROWTH: 'Adding drivers',
+  HIRING_DRIVERS: 'Hiring drivers', REACTIVATED: 'Reactivated carrier',
 }
 export const signalLabel = (t: string) => SIGNAL_LABELS[t] ?? t.toLowerCase().replace(/_/g, ' ').replace(/^\w/, (c) => c.toUpperCase())
 export const scoreClass = (s: number) => (s >= 70 ? 'score-high' : s >= 40 ? 'score-mid' : 'score-low')

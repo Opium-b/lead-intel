@@ -21,7 +21,7 @@ from sqlalchemy.orm import Session
 
 from app.collectors.base import ContactRecord
 from app.config import get_settings
-from app.models import Company, Contact, Lead, LeadEvent
+from app.models import Company, Contact, Lead, LeadEvent, SourceRecord
 
 log = logging.getLogger(__name__)
 
@@ -50,6 +50,12 @@ DOMAIN = re.compile(r"(?:[a-z0-9-]+\.)+[a-z]{2,}")
 EMAIL = re.compile(r"[a-z0-9._%+-]+@" + DOMAIN.pattern)
 TEXT_EMAIL = re.compile(r"(?<![\w.%+-])[\w.%+-]+@(?:[a-z0-9-]+\.)+[a-z]{2,}\b", re.I)
 PHONE = re.compile(r"(?<!\d)\(?\d{3}\)?[\s.-]\d{3}[.-]\d{4}(?!\d)")  # separators required: bare digit runs are ids
+# Driver-hiring language only: "now hiring" alone could be an office job.
+HIRING = re.compile(
+    r"\b(?:now hiring|we(?:'|’)?re hiring|we are hiring|hiring)"
+    r"(?:[\s-]+(?:cdl(?:-a)?|class[\s-]a|otr|local|regional|experienced|company|truck|team))*[\s-]+drivers?\b"
+    r"|\bhiring[\s-]+owner[\s-]operators?\b|\bdrivers?\s+wanted\b"
+    r"|\b(?:cdl(?:-a)?|class[\s-]a|truck)\s+drivers?\s+needed\b|\bdrive\s+for\s+us\b", re.I)
 NOT_EMAIL = (".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg", "example.com", "domain.com", "sentry.io", "wixpress.com")
 
 
@@ -98,6 +104,7 @@ class Page:
     contacts: list[ContactRecord] = field(default_factory=list)
     subpages: list[str] = field(default_factory=list)
     text: str = ""
+    hiring: str | None = None  # the hiring phrase seen on this page
 
     @classmethod
     def parse(cls, url: str, html: str) -> "Page":
@@ -133,6 +140,8 @@ class Page:
             add("phone", _phone(m.group()), "Phone on website")
         if p.has_form:
             add("form", url, "Contact form")
+        if m := HIRING.search(page.text):
+            page.hiring = " ".join(m.group().split())
         return page
 
     def shows(self, dot: str | None, phones: set[str]) -> str | None:
@@ -143,21 +152,26 @@ class Page:
         return f"registered phone {hit}" if (hit := next(iter(seen & phones), None)) else None
 
 
+def _hiring(pages: list[Page]) -> list[tuple[str, str]]:
+    return [(p.url, p.hiring) for p in pages if p.hiring][:1]  # one per site: the homepage when it says so
+
+
 class Enricher:
     def __init__(self, client: httpx.Client | None = None, search_key: str | None = None):
         self.client = client or httpx.Client(timeout=10, follow_redirects=True, headers={"User-Agent": USER_AGENT},
                                              event_hooks={"request": [_public_only]})
         self.search_key = search_key
 
-    def enrich(self, company: Company, emails: list[str], phones: list[str]) -> tuple[str | None, list[ContactRecord]]:
-        """Returns (website, contacts). Network errors on a site just mean nothing was found there."""
+    def enrich(self, company: Company, emails: list[str], phones: list[str]
+               ) -> tuple[str | None, list[ContactRecord], list[tuple[str, str]]]:
+        """Returns (website, contacts, [(page, hiring phrase)]). Network errors on a site mean nothing was found."""
         for domain in dict.fromkeys(e.rsplit("@", 1)[-1].lower() for e in emails):
             if domain in FREE_MAIL or not DOMAIN.fullmatch(domain):
                 continue
             if site := self._read_site(f"https://{domain}/"):
                 url, pages = site
                 return url, self._collect(ContactRecord(
-                    "website", url, "email_domain", url, f"Domain of registered email @{domain}"), pages)
+                    "website", url, "email_domain", url, f"Domain of registered email @{domain}"), pages), _hiring(pages)
 
         if self.search_key:
             for base in self._search(company):
@@ -166,8 +180,9 @@ class Enricher:
                 url, pages = site
                 if proof := next(((p.url, why) for p in pages if (why := p.shows(company.dot_number, set(phones)))), None):
                     return url, self._collect(ContactRecord(
-                        "website", url, "web_search", proof[0], f"Found by web search; page shows {proof[1]}"), pages)
-        return None, []
+                        "website", url, "web_search", proof[0], f"Found by web search; page shows {proof[1]}"), pages), \
+                        _hiring(pages)
+        return None, [], []
 
     @staticmethod
     def _collect(website: ContactRecord, pages: list[Page]) -> list[ContactRecord]:
@@ -232,7 +247,7 @@ class Enricher:
 
 def enrich_leads(db: Session, enricher: Enricher | None = None, limit: int | None = None) -> dict:
     """Enrich leads at or above ENRICH_MIN_SCORE not enriched within ENRICH_TTL_DAYS, best score first."""
-    from app.pipeline import process_companies  # pipeline imports this module
+    from app.pipeline import _hash, process_companies  # pipeline imports this module
 
     s = get_settings()
     enricher = enricher or Enricher(search_key=s.brave_api_key)
@@ -247,8 +262,8 @@ def enrich_leads(db: Session, enricher: Enricher | None = None, limit: int | Non
     for company in due:
         known = db.execute(select(Contact.type, Contact.value).where(Contact.company_id == company.id)).all()
         try:
-            website, found = enricher.enrich(company, [v for t, v in known if t == "email"],
-                                             [v for t, v in known if t == "phone"])
+            website, found, hiring = enricher.enrich(company, [v for t, v in known if t == "email"],
+                                                     [v for t, v in known if t == "phone"])
         except Exception:
             log.exception("enrichment failed for company %d", company.id)  # not marked enriched: retried next run
             stats["failed"] += 1
@@ -257,11 +272,20 @@ def enrich_leads(db: Session, enricher: Enricher | None = None, limit: int | Non
             dict(company_id=company.id, type=c.type, value=c.value, label=c.label, source=c.source,
                  source_url=c.source_url) for c in found
         ]).on_conflict_do_nothing(index_elements=["company_id", "type", "value"]).returning(Contact.type)).all() if found else []
+        for page, phrase in hiring:  # a fact from their own site; the HiringRule turns it into a signal
+            payload = {"phrase": phrase, "page": page, "seen_on": str(now.date())}
+            stmt = insert(SourceRecord).values(source="website", record_type="hiring", external_id=page[:128],
+                                               company_id=company.id, observed_at=now.date(), source_url=page,
+                                               payload=payload, payload_hash=_hash(payload))
+            db.execute(stmt.on_conflict_do_update(
+                index_elements=["source", "record_type", "external_id"],
+                set_={k: stmt.excluded[k] for k in ("company_id", "observed_at", "payload", "payload_hash")}))
         company.website = website or company.website
         company.enriched_at = now
         if new:
             db.add(LeadEvent(lead_id=company.lead.id, event_type="ENRICHED",
                              meta={"website": website, "contacts": len(new), "types": sorted(set(new))}))
+        if new or hiring:
             changed.append(company.id)
         db.commit()
         stats["enriched"] += 1
