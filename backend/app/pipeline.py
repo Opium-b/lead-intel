@@ -13,6 +13,7 @@ from app.collectors import COLLECTORS
 from app.collectors.base import NormalizedBatch
 from app.config import get_settings
 from app.enrichment import enrich_leads
+from app.notify import notify_qualified_leads
 from app.models import Company, CollectorRun, Contact, Lead, LeadEvent, Signal, SourceRecord
 from app.signals.base import Fact
 from app.services_catalog import pitch
@@ -159,6 +160,11 @@ def _run(db: Session, source: str, stats: dict, collect) -> CollectorRun:
         except Exception:  # enrichment is best-effort; collection already succeeded
             db.rollback()
             log.exception("collector run %d: enrichment failed", run.id)
+        try:  # after enrichment, so messages include the contacts just found
+            result["notifications"] = notify_qualified_leads(db)
+        except Exception:
+            db.rollback()
+            log.exception("collector run %d: notifications failed", run.id)
         run.status = "success"
         # refreshes don't move the discovery cursor
         run.cursor = (batch.cursor or date.fromisoformat(stats["since"])) if "since" in stats else None

@@ -160,10 +160,11 @@ No guessing: nothing is stored that was not observed, and every contact records 
 
 ## 9. Telegram architecture (phase 3)
 
-`notifications/` has a `Notifier` protocol and a `TelegramNotifier` (Bot API `sendMessage`, HTML parse mode, escaped values).
-- The pipeline calls `notify_qualified_leads()` after scoring, but only when `TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID` are set.
-- Send condition: `score ≥ NOTIFY_MIN_SCORE AND notified_at IS NULL`. `notified_at` is set in the same transaction, after a successful send.
-- Failures are logged and swallowed, so lead generation never depends on Telegram.
+`app/notify.py`: `TelegramNotifier` (Bot API `sendMessage`, HTML parse mode, every value escaped) and `notify_qualified_leads()`.
+- Runs at the end of every collector run, after enrichment (so messages carry fresh contacts), only when `TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID` are set. Also `cli notify`, and `cli notify --test` to check the bot setup.
+- Send condition: `score ≥ NOTIFY_MIN_SCORE AND notified_at IS NULL`, best score first, at most `NOTIFY_LIMIT` per run, ~1 msg/s. `notified_at` and a `NOTIFIED` lead event are written after a successful send, so each lead is sent at most once.
+- Message: name, score, USDOT/MC/location/fleet, top 4 score reasons, top 3 service lines to pitch, contact person/phone/email/website, dashboard link.
+- Failures are logged (without the token, which lives in the URL) and swallowed; an unsent lead is retried next run. Lead generation never depends on Telegram.
 
 ## 10. Frontend architecture
 

@@ -37,6 +37,7 @@ const describe = (e: LeadDetail['events'][number]) => {
     case 'STATUS_CHANGED': return `Status changed ${m.from} → ${m.to}`
     case 'SIGNALS_ADDED': return `${m.count} new signal(s): ${(m.signals ?? []).slice(0, 3).map((s: any) => s.description).join('; ')}`
     case 'ENRICHED': return `Found ${m.contacts} new contact(s)${m.website ? ` · website ${m.website}` : ''}`
+    case 'NOTIFIED': return `Sent to Telegram (score ${m.score})`
     case 'NOTE': return m.text
     default: return JSON.stringify(m)
   }

@@ -33,6 +33,7 @@ class Settings(BaseSettings):
     telegram_bot_token: str | None = None
     telegram_chat_id: str | None = None
     notify_min_score: int = 70
+    notify_limit: int = 20  # messages per run; the rest go out on later runs
 
 
 @lru_cache
