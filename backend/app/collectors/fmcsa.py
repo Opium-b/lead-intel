@@ -264,11 +264,21 @@ class FmcsaCollector:
         dot = r["dot_number"]
         url = row_url(CENSUS, "dot_number", dot)
         contacts = []
-        if (phone := "".join(c for c in r.get("phone", "") if c.isdigit())) and len(phone) >= 10:
-            contacts.append(ContactRecord("phone", phone, "fmcsa_census", url, "Registered phone"))
+        digits = lambda k: "".join(c for c in r.get(k) or "" if c.isdigit())  # noqa: E731
+        for key, kind, label in (("phone", "phone", "Registered phone"), ("cell_phone", "phone", "Registered cell phone"),
+                                 ("fax", "fax", "Registered fax")):
+            if len(number := digits(key)) >= 10:
+                contacts.append(ContactRecord(kind, number, "fmcsa_census", url, label))
         if (email := (r.get("email_address") or "").strip().lower()) and "@" in email:
             contacts.append(ContactRecord("email", email, "fmcsa_census", url, "Registered email"))
+        for key in ("company_officer_1", "company_officer_2"):
+            if name := " ".join((r.get(key) or "").split()).title():
+                contacts.append(ContactRecord("person", name, "fmcsa_census", url, "Company officer"))
         street, city, st, zip_ = (r.get(k) for k in ("phy_street", "phy_city", "phy_state", "phy_zip"))
+        m_street, m_city, m_st, m_zip = (r.get(f"carrier_mailing_{k}") for k in ("street", "city", "state", "zip"))
+        if m_street and m_street.strip() != (street or "").strip():  # same as the yard address adds nothing
+            mailing = ", ".join(p for p in (m_street.strip(), m_city, f"{m_st or ''} {m_zip or ''}".strip()) if p)
+            contacts.append(ContactRecord("address", mailing, "fmcsa_census", url, "Mailing address"))
         return CompanyRecord(
             dot_number=dot,
             name=r["legal_name"].strip(),

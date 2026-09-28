@@ -107,6 +107,8 @@ const evidenceValue = (v: unknown) => (Array.isArray(v) ? v.join(', ') : String(
         <ul class="contacts">
           <li v-for="c in lead.contacts" :key="c.id">
             <a v-if="c.type === 'phone'" :href="`tel:${c.value}`">{{ fmtPhone(c.value) }}</a>
+            <span v-else-if="c.type === 'fax'">{{ fmtPhone(c.value) }}</span>
+            <span v-else-if="c.type === 'person' || c.type === 'address'">{{ c.value }}</span>
             <a v-else-if="c.type === 'email'" :href="`mailto:${c.value}`">{{ c.value }}</a>
             <a v-else :href="c.value" target="_blank" rel="noopener">{{ c.value }}</a>
             <div class="muted small">{{ c.label ?? c.type }} · source:

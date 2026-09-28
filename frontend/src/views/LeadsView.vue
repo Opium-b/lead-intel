@@ -88,7 +88,7 @@ const SIGNAL_TYPES = Object.keys(SIGNAL_LABELS)
           <td class="small"><div v-for="k in l.service_lines.slice(0, 3)" :key="k" class="pitch-line">{{ lineLabel(k) }}</div>
             <span v-if="l.service_lines.length > 3" class="muted">+{{ l.service_lines.length - 3 }} more</span></td>
           <td><span :class="['score-pill', scoreClass(l.score)]">{{ l.score }}</span></td>
-          <td class="small">{{ l.phone ? fmtPhone(l.phone) : '' }}<div class="muted">{{ l.email }}</div></td>
+          <td class="small"><b v-if="l.person">{{ l.person }}</b><div>{{ l.phone ? fmtPhone(l.phone) : '' }}</div><div class="muted">{{ l.email }}</div></td>
           <td><span class="status">{{ l.status }}</span></td>
           <td class="small">{{ fmtDate(l.updated_at) }}</td>
         </tr>

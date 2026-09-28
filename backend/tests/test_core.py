@@ -22,7 +22,10 @@ def ago(days: int, fmt: str = "%Y%m%d") -> str:
 
 CENSUS = {"dot_number": "123", "legal_name": "ACME FREIGHT LLC", "phy_state": "TX", "phy_city": "DALLAS",
           "power_units": "12", "total_drivers": "14", "status_code": "A", "add_date": ago(60),
-          "mcs150_date": ago(900), "phone": "(214) 555-0100", "email_address": "Ops@AcmeFreight.com", "hm_ind": "N"}
+          "mcs150_date": ago(900), "phone": "(214) 555-0100", "email_address": "Ops@AcmeFreight.com", "hm_ind": "N",
+          "company_officer_1": "JOHN Q DOE", "cell_phone": "(214) 555-0111", "fax": "214-555-0122",
+          "carrier_mailing_street": "PO BOX 9", "carrier_mailing_city": "DALLAS", "carrier_mailing_state": "TX",
+          "carrier_mailing_zip": "75201"}
 
 
 def insp(i: int, days_ago: int, viol: int, oos: int) -> dict:
@@ -74,7 +77,10 @@ def test_normalize():
     assert [c.dot_number for c in b.companies] == ["123"]
     c = b.companies[0]
     assert (c.state, c.fleet_size, c.operating_status, c.mc_number) == ("TX", 12, "A", "MC999")
-    assert {(x.type, x.value) for x in c.contacts} == {("phone", "2145550100"), ("email", "ops@acmefreight.com")}
+    assert {(x.type, x.value, x.label) for x in c.contacts} == {
+        ("phone", "2145550100", "Registered phone"), ("email", "ops@acmefreight.com", "Registered email"),
+        ("person", "John Q Doe", "Company officer"), ("phone", "2145550111", "Registered cell phone"),
+        ("fax", "2145550122", "Registered fax"), ("address", "PO BOX 9, DALLAS, TX 75201", "Mailing address")}
     counts = {t: sum(e.record_type == t for e in b.events) for t in ("inspection", "violation", "authority", "insurance")}
     assert counts == {"inspection": 6, "violation": 4, "authority": 1, "insurance": 2}
     assert all(e.source_url.startswith("https://data.transportation.gov/") for e in b.events)
@@ -139,7 +145,7 @@ def test_pipeline_is_idempotent(db):
     for _ in range(2):
         process_companies(db, ingest(db, batch()), TODAY)
     count = lambda m: db.scalar(select(func.count()).select_from(m))  # noqa: E731
-    assert (count(SourceRecord), count(Contact), count(Lead)) == (15, 2, 1)
+    assert (count(SourceRecord), count(Contact), count(Lead)) == (15, 6, 1)
     assert db.scalar(select(Company.mc_number)) == "MC999"
     n_signals = count(Signal)
     assert [e.event_type for e in db.scalars(select(LeadEvent))] == ["CREATED"]

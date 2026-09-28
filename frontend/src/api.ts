@@ -15,6 +15,7 @@ export interface LeadRow {
   service_lines: string[]
   phone: string | null
   email: string | null
+  person: string | null
   updated_at: string
 }
 export interface LeadPage { items: LeadRow[]; total: number; page: number; page_size: number }

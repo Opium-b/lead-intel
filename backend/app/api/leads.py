@@ -45,7 +45,8 @@ def list_leads(
                   func.array_agg(func.distinct(Signal.type)).label("signal_types"))
            .group_by(Signal.company_id).subquery())
     stmt = (select(Lead, Company, func.coalesce(sig.c.signal_count, 0).label("signal_count"), sig.c.signal_types,
-                   _first_contact("phone").label("phone"), _first_contact("email").label("email"))
+                   _first_contact("phone").label("phone"), _first_contact("email").label("email"),
+                   _first_contact("person").label("person"))
             .join(Company, Company.id == Lead.company_id)
             .outerjoin(sig, sig.c.company_id == Company.id)
             .where(Lead.score >= min_score))
@@ -70,8 +71,9 @@ def list_leads(
     items = [LeadRow(id=l.id, company_id=c.id, name=c.name, dot_number=c.dot_number, state=c.state,
                      fleet_size=c.fleet_size, score=l.score, status=l.status, signal_count=n,
                      signal_types=sorted(types or []),
-                     service_lines=l.service_lines or [], phone=phone, email=email, updated_at=l.updated_at)
-             for l, c, n, types, phone, email in rows]
+                     service_lines=l.service_lines or [], phone=phone, email=email, person=person,
+                     updated_at=l.updated_at)
+             for l, c, n, types, phone, email, person in rows]
     return LeadPage(items=items, total=total, page=page, page_size=page_size)
 
 

@@ -11,8 +11,10 @@ HOME = """<html><body><h1>Acme Freight</h1>
 <a href="tel:+1 (214) 555-0100">Call</a>
 <a href="https://www.facebook.com/acmefreight/">fb</a>
 <a href="https://www.facebook.com/sharer/sharer.php?u=x">share</a>
+<p>Sales: Sales@AcmeFreight.com · (214) 555-0177 · <img src="logo@2x.png"> hero@2x.png</p>
+<a href="https://wa.me/12145550188">WhatsApp</a>
 <a href="/contact">Contact</a></body></html>"""
-CONTACT = '<p>Dispatch: <a href="tel:214.555.0199">214.555.0199</a></p>'
+CONTACT = '<p>Dispatch: <a href="tel:214.555.0199">214.555.0199</a></p><form><textarea name="m"></textarea></form>'
 
 
 def fake_web(pages: dict[str, tuple[int, str]], seen: list[str]) -> httpx.Client:
@@ -42,6 +44,10 @@ def test_website_from_registered_email_domain():
         ("phone", "2145550100", "website", "https://acmefreight.com/"),
         ("social", "https://www.facebook.com/acmefreight", "website", "https://acmefreight.com/"),
         ("phone", "2145550199", "website", "https://acmefreight.com/contact"),
+        ("email", "sales@acmefreight.com", "website", "https://acmefreight.com/"),  # plain text, not a link
+        ("phone", "2145550177", "website", "https://acmefreight.com/"),
+        ("social", "https://wa.me/12145550188", "website", "https://acmefreight.com/"),
+        ("form", "https://acmefreight.com/contact", "website", "https://acmefreight.com/contact"),
     }
 
 
@@ -73,12 +79,12 @@ def test_enrich_leads_is_idempotent_and_respects_ttl(db):
     process_companies(db, ingest(db, batch()), TODAY)
     web = fake_web({"acmefreight.com/": (200, HOME), "acmefreight.com/contact": (200, CONTACT)}, [])
     first = enrich_leads(db, Enricher(web))
-    assert first["enriched"] == 1 and first["contacts"] == 4
+    assert first["enriched"] == 1 and first["contacts"] == 8
     assert enrich_leads(db, Enricher(web))["enriched"] == 0  # within TTL: skipped
 
     db.execute(Company.__table__.update().values(enriched_at=None))
     db.commit()
     assert enrich_leads(db, Enricher(web))["contacts"] == 0  # re-run: nothing duplicated
     assert db.scalar(select(Company.website)) == "https://acmefreight.com/"
-    assert db.scalar(select(func.count()).select_from(Contact)) == 2 + 4
+    assert db.scalar(select(func.count()).select_from(Contact)) == 6 + 8
     assert [e.event_type for e in db.scalars(select(LeadEvent).where(LeadEvent.event_type == "ENRICHED"))] == ["ENRICHED"]

@@ -11,7 +11,7 @@ import socket
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from html.parser import HTMLParser
-from urllib.parse import unquote, urljoin, urlsplit
+from urllib.parse import parse_qs, unquote, urljoin, urlsplit
 from urllib.robotparser import RobotFileParser
 
 import httpx
@@ -48,7 +48,9 @@ SOCIAL = {"facebook.com": "Facebook", "linkedin.com": "LinkedIn", "instagram.com
           "x.com": "X", "twitter.com": "X"}
 DOMAIN = re.compile(r"(?:[a-z0-9-]+\.)+[a-z]{2,}")
 EMAIL = re.compile(r"[a-z0-9._%+-]+@" + DOMAIN.pattern)
-PHONE = re.compile(r"\(?\d{3}\)?[\s.-]?\d{3}[\s.-]?\d{4}")
+TEXT_EMAIL = re.compile(r"(?<![\w.%+-])[\w.%+-]+@(?:[a-z0-9-]+\.)+[a-z]{2,}\b", re.I)
+PHONE = re.compile(r"(?<!\d)\(?\d{3}\)?[\s.-]\d{3}[.-]\d{4}(?!\d)")  # separators required: bare digit runs are ids
+NOT_EMAIL = (".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg", "example.com", "domain.com", "sentry.io", "wixpress.com")
 
 
 def _phone(raw: str) -> str | None:
@@ -78,10 +80,13 @@ class _Parser(HTMLParser):
         super().__init__()
         self.links: list[str] = []
         self.text: list[str] = []
+        self.has_form = False
 
     def handle_starttag(self, tag, attrs):
         if tag == "a" and (href := dict(attrs).get("href")):
             self.links.append(href.strip())
+        elif tag == "textarea":  # a message box: a contact form, not a search or login form
+            self.has_form = True
 
     def handle_data(self, data):
         self.text.append(data)
@@ -112,11 +117,22 @@ class Page:
                 full = urljoin(url, href).split("#")[0]
                 parts = urlsplit(full)
                 host, path = (parts.hostname or ""), parts.path.rstrip("/")
-                if net := _on(host, SOCIAL):
+                if host in ("wa.me", "api.whatsapp.com", "wa.link"):
+                    number = path.strip("/") if host == "wa.me" else parse_qs(parts.query).get("phone", [""])[0]
+                    if number.isdigit():
+                        add("social", f"https://wa.me/{number}", "WhatsApp")
+                elif net := _on(host, SOCIAL):
                     if path and not any(w in path.lower() for w in ("share", "intent", "dialog")):
                         add("social", f"https://{host}{path}", f"{SOCIAL[net]} page")
                 elif host == urlsplit(url).hostname and "contact" in path.lower() and full not in page.subpages:
                     page.subpages.append(full)
+        for m in TEXT_EMAIL.finditer(page.text):
+            if not (email := m.group().lower()).endswith(NOT_EMAIL):
+                add("email", email, "Email on website")
+        for m in PHONE.finditer(page.text):
+            add("phone", _phone(m.group()), "Phone on website")
+        if p.has_form:
+            add("form", url, "Contact form")
         return page
 
     def shows(self, dot: str | None, phones: set[str]) -> str | None:

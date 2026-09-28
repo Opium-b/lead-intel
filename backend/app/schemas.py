@@ -71,6 +71,7 @@ class LeadRow(BaseModel):
     service_lines: list[str]
     phone: str | None
     email: str | None
+    person: str | None
     updated_at: datetime
 
 
