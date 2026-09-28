@@ -7,8 +7,8 @@ One small VPS runs everything with Docker Compose: `db` (Postgres 18), `api` (Fa
 
 ## First deploy
 
-1. Rent an Ubuntu 24.04 VPS (1 vCPU / 2 GB is enough) and add this Mac's SSH key (`~/.ssh/id_ed25519.pub`) when creating it.
-2. From the repo root: `deploy/deploy.sh root@SERVER_IP --with-data`
+1. Rent an Ubuntu 24.04 VPS (1 vCPU / 2 GB is enough) and add this Mac's SSH key (`~/.ssh/id_ed25519.pub`) when creating it, and allow inbound TCP 22, 80, 443 in its cloud firewall.
+2. From the repo root: `deploy/deploy.sh ubuntu@SERVER_IP --with-data`
 3. Open `https://SERVER-IP-WITH-DASHES.sslip.io` and sign in with `API_SECRET` from `backend/.env`.
 
 Without a domain the site uses `sslip.io`, a free DNS name that maps to the IP, so Let's Encrypt can issue a real
@@ -17,7 +17,7 @@ certificate. With a domain: point an A record at the server, set `SITE_ADDRESS=h
 
 ## Updating
 
-`deploy/deploy.sh root@SERVER_IP`: syncs code and rebuilds. Server settings and data are kept.
+`deploy/deploy.sh ubuntu@SERVER_IP`: syncs code and rebuilds. Server settings and data are kept.
 
 ## Everyday server commands (in `/opt/leadintel`)
 
