@@ -126,3 +126,12 @@ summary { cursor: pointer; color: var(--muted); }
   .timeline li { grid-template-columns: 1fr; gap: 2px; }
   .topbar { padding: 0 16px; gap: 12px; }
 }
+
+.log-form { display: flex; flex-wrap: wrap; gap: .5rem; align-items: end; }
+.log-form input { flex: 1 1 16rem; }
+.status.no_answer, .status.declined, .status.disqualified, .status.contacted, .status.qualified, .status.converted {
+  padding: 1px 7px; border-radius: 6px; }
+.status.no_answer { background: var(--mid-bg); color: var(--mid); }
+.status.declined, .status.disqualified { background: var(--high-bg); color: var(--high); }
+.status.contacted, .status.qualified { background: var(--ok-bg); color: var(--ok); }
+.status.converted { background: var(--accent-soft); color: var(--accent); }

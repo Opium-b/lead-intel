@@ -1,11 +1,12 @@
 from typing import Literal
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
 from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session, selectinload
 
-from app.db import get_db
+from app.db import SessionLocal, get_db
 from app.models import Company, Contact, Lead, LeadEvent, LeadStatus, Signal
+from app.notify import send_lead_update
 from app.services_catalog import SERVICE_LINES, pitch
 from app.schemas import EventOut, LeadDetail, LeadPage, LeadRow, LeadUpdate, NoteIn
 
@@ -97,21 +98,35 @@ def get_lead(lead_id: int, db: Session = Depends(get_db)):
                                       "pitch": pitch(signals)})
 
 
+def _telegram_update(lead_id: int) -> None:
+    """Runs after the response: a slow or failing Telegram never delays or breaks the dashboard."""
+    with SessionLocal() as db:
+        send_lead_update(db, lead_id)
+
+
 @router.patch("/{lead_id}", response_model=LeadDetail)
-def update_lead(lead_id: int, body: LeadUpdate, db: Session = Depends(get_db)):
+def update_lead(lead_id: int, body: LeadUpdate, tasks: BackgroundTasks, db: Session = Depends(get_db)):
     lead = _get_lead(db, lead_id)
+    note = (body.note or "").strip()
+    extra = ({"channel": body.channel} if body.channel else {}) | ({"note": note} if note else {})
     if lead.status != body.status:
-        db.add(LeadEvent(lead_id=lead.id, event_type="STATUS_CHANGED", meta={"from": lead.status, "to": body.status}))
+        db.add(LeadEvent(lead_id=lead.id, event_type="STATUS_CHANGED", meta={"from": lead.status, "to": body.status} | extra))
         lead.status = body.status
-        db.commit()
+    elif note:
+        db.add(LeadEvent(lead_id=lead.id, event_type="NOTE", meta={"text": note} | extra))
+    else:
+        return get_lead(lead_id, db)
+    db.commit()
+    tasks.add_task(_telegram_update, lead_id)
     db.expire_all()
     return get_lead(lead_id, db)
 
 
 @router.post("/{lead_id}/notes", response_model=EventOut, status_code=201)
-def add_note(lead_id: int, body: NoteIn, db: Session = Depends(get_db)):
+def add_note(lead_id: int, body: NoteIn, tasks: BackgroundTasks, db: Session = Depends(get_db)):
     lead = _get_lead(db, lead_id)
     event = LeadEvent(lead_id=lead.id, event_type="NOTE", meta={"text": body.text.strip()})
     db.add(event)
     db.commit()
+    tasks.add_task(_telegram_update, lead_id)
     return event

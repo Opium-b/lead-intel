@@ -27,6 +27,12 @@ def test_lead_flow(db):
     assert detail["score"] == min(100, sum(b["points"] for b in detail["score_breakdown"]))
 
     assert client.patch(f"/api/leads/{lead_id}", headers=AUTH, json={"status": "BOGUS"}).status_code == 422
+    assert client.patch(f"/api/leads/{lead_id}", headers=AUTH,
+                        json={"status": "CONTACTED", "channel": "pigeon"}).status_code == 422
+    r = client.patch(f"/api/leads/{lead_id}", headers=AUTH,
+                     json={"status": "NO_ANSWER", "channel": "phone", "note": " left voicemail "}).json()
+    change = next(e for e in r["events"] if e["event_type"] == "STATUS_CHANGED")
+    assert change["meta"] == {"from": "NEW", "to": "NO_ANSWER", "channel": "phone", "note": "left voicemail"}
     r = client.patch(f"/api/leads/{lead_id}", headers=AUTH, json={"status": "REVIEWED"}).json()
     assert r["status"] == "REVIEWED" and r["events"][0]["event_type"] == "STATUS_CHANGED"
     assert client.post(f"/api/leads/{lead_id}/notes", headers=AUTH, json={"text": "called"}).status_code == 201

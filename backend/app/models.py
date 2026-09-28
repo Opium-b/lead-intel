@@ -13,8 +13,10 @@ class LeadStatus(StrEnum):
     NEW = "NEW"
     REVIEWED = "REVIEWED"
     CONTACTED = "CONTACTED"
+    NO_ANSWER = "NO_ANSWER"  # tried, couldn't reach them
     QUALIFIED = "QUALIFIED"
-    DISQUALIFIED = "DISQUALIFIED"
+    DECLINED = "DECLINED"  # they said no
+    DISQUALIFIED = "DISQUALIFIED"  # we decided they're not a fit
     CONVERTED = "CONVERTED"
 
 

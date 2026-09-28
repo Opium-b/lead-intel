@@ -1,5 +1,5 @@
 from datetime import date, datetime
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -113,6 +113,8 @@ class LeadDetail(ORM):
 
 class LeadUpdate(BaseModel):
     status: LeadStatus
+    channel: Literal["phone", "email", "sms", "whatsapp", "in_person", "other"] | None = None  # how we reached them
+    note: str | None = Field(None, max_length=2000)  # outcome of the contact
 
 
 class NoteIn(BaseModel):

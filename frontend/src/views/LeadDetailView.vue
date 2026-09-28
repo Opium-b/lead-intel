@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref } from 'vue'
-import { api, fmtDate, fmtDateTime, fmtPhone, scoreClass, signalLabel, STATUSES, type LeadDetail, type LeadStatus, type Signal } from '../api'
+import { api, CHANNEL_LABELS, fmtDate, fmtDateTime, fmtPhone, scoreClass, signalLabel, statusLabel, STATUSES, type Channel, type LeadDetail, type LeadStatus, type Signal } from '../api'
 
 const props = defineProps<{ id: number }>()
 const lead = ref<LeadDetail>()
@@ -9,8 +9,10 @@ const note = ref('')
 const expanded = reactive<Record<string, boolean>>({})
 const PREVIEW = 3
 
+const upd = reactive<{ status: LeadStatus; channel: Channel | ''; note: string }>({ status: 'NEW', channel: '', note: '' })
+const saving = ref(false)
 const load = async () => {
-  try { lead.value = await api.lead(props.id) } catch (e) { error.value = String(e) }
+  try { lead.value = await api.lead(props.id); upd.status = lead.value.status } catch (e) { error.value = String(e) }
 }
 onMounted(load)
 
@@ -22,9 +24,14 @@ const groups = computed(() => {
 const safer = computed(() => lead.value?.company.dot_number &&
   `https://safer.fmcsa.dot.gov/query.asp?searchtype=ANY&query_type=queryCarrierSnapshot&query_param=USDOT&query_string=${lead.value.company.dot_number}`)
 
-async function setStatus(e: Event) {
-  try { lead.value = await api.setStatus(props.id, (e.target as HTMLSelectElement).value as LeadStatus) } catch (err) { error.value = String(err) }
+async function saveUpdate() {
+  saving.value = true
+  try {
+    lead.value = await api.updateLead(props.id, { status: upd.status, channel: upd.channel || undefined, note: upd.note.trim() || undefined })
+    upd.channel = ''; upd.note = ''
+  } catch (err) { error.value = String(err) } finally { saving.value = false }
 }
+const via = (m: Record<string, any>) => (m.channel ? ` via ${CHANNEL_LABELS[m.channel as Channel] ?? m.channel}` : '')
 async function addNote() {
   if (!note.value.trim()) return
   try { await api.addNote(props.id, note.value); note.value = ''; await load() } catch (err) { error.value = String(err) }
@@ -34,11 +41,11 @@ const describe = (e: LeadDetail['events'][number]) => {
   switch (e.event_type) {
     case 'CREATED': return `Lead created with score ${m.score} from signals: ${(m.signals ?? []).map(signalLabel).join(', ')}`
     case 'SCORE_CHANGED': return `Score changed ${m.from} → ${m.to}`
-    case 'STATUS_CHANGED': return `Status changed ${m.from} → ${m.to}`
+    case 'STATUS_CHANGED': return `${statusLabel(m.from)} → ${statusLabel(m.to)}${via(m)}${m.note ? ` — ${m.note}` : ''}`
     case 'SIGNALS_ADDED': return `${m.count} new signal(s): ${(m.signals ?? []).slice(0, 3).map((s: any) => s.description).join('; ')}`
     case 'ENRICHED': return `Found ${m.contacts} new contact(s)${m.website ? ` · website ${m.website}` : ''}`
     case 'NOTIFIED': return `Sent to Telegram (score ${m.score})`
-    case 'NOTE': return m.text
+    case 'NOTE': return `Note${via(m)}: ${m.text}`
     default: return JSON.stringify(m)
   }
 }
@@ -56,13 +63,29 @@ const evidenceValue = (v: unknown) => (Array.isArray(v) ? v.join(', ') : String(
       </div>
       <div class="head-actions">
         <span :class="['score-big', scoreClass(lead.score)]">{{ lead.score }}<small>/100</small></span>
-        <label>Status
-          <select :value="lead.status" @change="setStatus">
-            <option v-for="s in STATUSES" :key="s" :value="s">{{ s }}</option>
-          </select>
-        </label>
+        <span :class="['status', lead.status.toLowerCase()]">{{ statusLabel(lead.status) }}</span>
       </div>
     </header>
+
+    <section class="card">
+      <h2>Log contact</h2>
+      <form class="log-form" @submit.prevent="saveUpdate">
+        <label>Status
+          <select v-model="upd.status">
+            <option v-for="s in STATUSES" :key="s" :value="s">{{ statusLabel(s) }}</option>
+          </select>
+        </label>
+        <label>Via
+          <select v-model="upd.channel">
+            <option value="">—</option>
+            <option v-for="(label, key) in CHANNEL_LABELS" :key="key" :value="key">{{ label }}</option>
+          </select>
+        </label>
+        <input v-model="upd.note" maxlength="2000" placeholder="Outcome, e.g. talked to owner, call back Friday" aria-label="Outcome" />
+        <button type="submit" :disabled="saving || (upd.status === lead.status && !upd.note.trim())">Save</button>
+      </form>
+      <p class="muted small">Saved to the timeline below and sent to Telegram.</p>
+    </section>
 
     <section class="card pitch" v-if="lead.pitch.length">
       <h2>🎯 What to pitch</h2>

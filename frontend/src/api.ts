@@ -1,5 +1,14 @@
-export type LeadStatus = 'NEW' | 'REVIEWED' | 'CONTACTED' | 'QUALIFIED' | 'DISQUALIFIED' | 'CONVERTED'
-export const STATUSES: LeadStatus[] = ['NEW', 'REVIEWED', 'CONTACTED', 'QUALIFIED', 'DISQUALIFIED', 'CONVERTED']
+export type LeadStatus = 'NEW' | 'REVIEWED' | 'CONTACTED' | 'NO_ANSWER' | 'QUALIFIED' | 'DECLINED' | 'DISQUALIFIED' | 'CONVERTED'
+export const STATUS_LABELS: Record<LeadStatus, string> = {
+  NEW: 'Not contacted yet', REVIEWED: 'Reviewed', CONTACTED: 'Contacted', NO_ANSWER: 'No answer',
+  QUALIFIED: 'Qualified', DECLINED: 'Declined', DISQUALIFIED: 'Disqualified', CONVERTED: 'Converted',
+}
+export const STATUSES = Object.keys(STATUS_LABELS) as LeadStatus[]
+export const statusLabel = (s: string) => STATUS_LABELS[s as LeadStatus] ?? s
+export type Channel = 'phone' | 'email' | 'sms' | 'whatsapp' | 'in_person' | 'other'
+export const CHANNEL_LABELS: Record<Channel, string> = {
+  phone: 'Phone', email: 'Email', sms: 'SMS', whatsapp: 'WhatsApp', in_person: 'In person', other: 'Other',
+}
 
 export interface LeadRow {
   id: number
@@ -89,7 +98,8 @@ export const api = {
   },
   serviceLines: () => request<ServiceLine[]>('GET', '/service-lines'),
   lead: (id: number) => request<LeadDetail>('GET', `/leads/${id}`),
-  setStatus: (id: number, status: LeadStatus) => request<LeadDetail>('PATCH', `/leads/${id}`, { status }),
+  updateLead: (id: number, body: { status: LeadStatus; channel?: Channel; note?: string }) =>
+    request<LeadDetail>('PATCH', `/leads/${id}`, body),
   addNote: (id: number, text: string) => request<LeadEvent>('POST', `/leads/${id}/notes`, { text }),
 }
 

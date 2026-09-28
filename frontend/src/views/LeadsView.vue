@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { onMounted, reactive, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
-import { api, fmtDate, fmtPhone, scoreClass, SIGNAL_LABELS, signalLabel, STATUSES, type LeadPage, type ServiceLine } from '../api'
+import { api, fmtDate, fmtPhone, scoreClass, SIGNAL_LABELS, signalLabel, statusLabel, STATUSES, type LeadPage, type ServiceLine } from '../api'
 
 const route = useRoute()
 const f = reactive({
@@ -46,7 +46,7 @@ const SIGNAL_TYPES = Object.keys(SIGNAL_LABELS)
     <input v-model="f.state" maxlength="2" placeholder="State" aria-label="State" class="w-state" />
     <select v-model="f.status" aria-label="Status">
       <option value="">All statuses</option>
-      <option v-for="s in STATUSES" :key="s" :value="s">{{ s }}</option>
+      <option v-for="s in STATUSES" :key="s" :value="s">{{ statusLabel(s) }}</option>
     </select>
     <select v-model="f.service_line" aria-label="Service line">
       <option value="">All service lines</option>
@@ -89,7 +89,7 @@ const SIGNAL_TYPES = Object.keys(SIGNAL_LABELS)
             <span v-if="l.service_lines.length > 3" class="muted">+{{ l.service_lines.length - 3 }} more</span></td>
           <td><span :class="['score-pill', scoreClass(l.score)]">{{ l.score }}</span></td>
           <td class="small"><b v-if="l.person">{{ l.person }}</b><div>{{ l.phone ? fmtPhone(l.phone) : '' }}</div><div class="muted">{{ l.email }}</div></td>
-          <td><span class="status">{{ l.status }}</span></td>
+          <td><span :class="['status', l.status.toLowerCase()]">{{ statusLabel(l.status) }}</span></td>
           <td class="small">{{ fmtDate(l.updated_at) }}</td>
         </tr>
         <tr v-if="data && !data.items.length"><td colspan="9" class="muted">No leads match these filters.</td></tr>

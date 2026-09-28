@@ -4,7 +4,7 @@ import httpx
 from sqlalchemy import select
 
 from app.models import Company, Lead, LeadEvent
-from app.notify import TelegramNotifier, notify_qualified_leads
+from app.notify import TelegramNotifier, notify_qualified_leads, send_lead_update
 from app.pipeline import ingest, process_companies
 from tests.test_core import TODAY, batch
 
@@ -56,3 +56,28 @@ def test_below_threshold_and_failures_are_not_marked(db):
 def test_disabled_without_credentials(db):
     setup_lead(db)
     assert notify_qualified_leads(db) is None  # no TELEGRAM_* in the test env
+
+
+def test_status_update_message_with_history(db):
+    setup_lead(db)
+    lead = db.scalar(select(Lead))
+    db.add(LeadEvent(lead_id=lead.id, event_type="STATUS_CHANGED",
+                     meta={"from": "NEW", "to": "NO_ANSWER", "channel": "phone", "note": "voicemail"}))
+    db.add(LeadEvent(lead_id=lead.id, event_type="STATUS_CHANGED",
+                     meta={"from": "NO_ANSWER", "to": "DECLINED", "channel": "email", "note": "has a <provider>"}))
+    lead.status = "DECLINED"
+    db.commit()
+    sent: list[dict] = []
+    assert send_lead_update(db, lead.id, TelegramNotifier("TOKEN", "42", client=fake_telegram(sent))) is True
+    text = sent[0]["text"]
+    assert "No answer → Declined" in text and "via Email" in text and "has a &lt;provider&gt;" in text
+    assert "Status: <b>Declined</b>" in text
+    assert "No answer via Phone — voicemail" in text  # earlier contact attempt shown in the history
+    assert text.index("Declined via Email") < text.index("No answer via Phone")  # newest first
+
+
+def test_alert_shows_status(db):
+    setup_lead(db)
+    sent: list[dict] = []
+    notify_qualified_leads(db, TelegramNotifier("TOKEN", "42", client=fake_telegram(sent)), min_score=1)
+    assert "Status: <b>Not contacted yet</b>" in sent[0]["text"]
