@@ -1,7 +1,7 @@
 # Lead Intel — logistics/trucking lead intelligence
 
 Public FMCSA data → companies → evidence-backed signals → explainable score → leads → dashboard.
-Design: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
+Design: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md). Deploying: [docs/DEPLOY.md](docs/DEPLOY.md).
 
 ## Run locally
 

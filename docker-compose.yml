@@ -1,0 +1,59 @@
+# Production: `docker compose up -d --build`. Settings: ./.env (compose) + ./backend/.env (app). See docs/DEPLOY.md.
+services:
+  db:
+    image: postgres:18-alpine  # same major as local dev, so dumps restore cleanly
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: leadintel
+      POSTGRES_USER: leadintel
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+    volumes: [pgdata:/var/lib/postgresql]  # postgres 18+ layout
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "leadintel"]
+      interval: 5s
+      retries: 20
+
+  api: &app
+    build: ./backend
+    restart: unless-stopped
+    env_file: ./backend/.env
+    environment:
+      DATABASE_URL: postgresql+psycopg://leadintel:${POSTGRES_PASSWORD}@db/leadintel
+      FRONTEND_ORIGIN: ${SITE_ADDRESS}
+    depends_on:
+      db: {condition: service_healthy}
+
+  # Collection + enrichment + AI briefs + Telegram alerts, every COLLECT_EVERY_HOURS.
+  scheduler:
+    <<: *app
+    depends_on:
+      api: {condition: service_started}  # api applies migrations first
+    command: ["sh", "-c", "sleep 60; while true; do python -m app.cli run || echo 'run failed'; sleep $${COLLECT_EVERY_HOURS:-6}h; done"]
+    environment:
+      DATABASE_URL: postgresql+psycopg://leadintel:${POSTGRES_PASSWORD}@db/leadintel
+      FRONTEND_ORIGIN: ${SITE_ADDRESS}
+      COLLECT_EVERY_HOURS: ${COLLECT_EVERY_HOURS:-6}
+
+  web:
+    build: ./frontend
+    restart: unless-stopped
+    environment:
+      SITE_ADDRESS: ${SITE_ADDRESS}
+    ports: ["80:80", "443:443"]
+    volumes: [caddy_data:/data]
+    depends_on: [api]
+
+  # Daily compressed dump, 14 kept, in ./backups on the host.
+  backup:
+    image: postgres:18-alpine
+    restart: unless-stopped
+    environment:
+      PGPASSWORD: ${POSTGRES_PASSWORD}
+    volumes: [./backups:/backups]
+    depends_on:
+      db: {condition: service_healthy}
+    command: ["sh", "-c", "while true; do pg_dump -h db -U leadintel leadintel | gzip > /backups/leadintel-$$(date +%F).sql.gz && ls -1t /backups/*.sql.gz | tail -n +15 | xargs -r rm; sleep 24h; done"]
+
+volumes:
+  pgdata:
+  caddy_data:
