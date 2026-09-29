@@ -69,6 +69,10 @@ SIGNAL_LINES: dict[str, list[str]] = {
     "DRIVER_GROWTH": ["driver_files", "eld_hos", "safety_tech"],
     "HIRING_DRIVERS": ["driver_files", "safety_tech", "insurance"],
     "REACTIVATED": ["registration", "insurance", "compliance", "new_carrier"],
+    "REINSTATED_AUTHORITY": ["insurance", "compliance", "registration"],
+    "REGISTER_PUBLISHED": ["new_carrier", "insurance", "registration", "eld_hos"],
+    "VOLUNTARY_SUSPENSION": ["insurance", "back_office"],
+    "NAME_CHANGE": ["registration", "insurance"],
 }
 SEVERITY_WEIGHT = {"critical": 4, "high": 3, "medium": 2, "low": 1}
 

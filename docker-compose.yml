@@ -23,12 +23,12 @@ services:
     depends_on:
       db: {condition: service_healthy}
 
-  # Collection + enrichment + AI briefs + Telegram alerts, every COLLECT_EVERY_HOURS.
+  # Collection + enrichment + AI briefs + Telegram alerts every COLLECT_EVERY_HOURS; FMCSA daily-decisions Excel once a day.
   scheduler:
     <<: *app
     depends_on:
       api: {condition: service_started}  # api applies migrations first
-    command: ["sh", "-c", "sleep 60; while true; do python -m app.cli run || echo 'run failed'; sleep $${COLLECT_EVERY_HOURS:-6}h; done"]
+    command: ["sh", "-c", "sleep 60; while true; do python -m app.cli run || echo 'run failed'; python -m app.cli report --once || echo 'report failed'; sleep $${COLLECT_EVERY_HOURS:-6}h; done"]
     environment:
       DATABASE_URL: postgresql+psycopg://leadintel:${POSTGRES_PASSWORD}@db/leadintel
       FRONTEND_ORIGIN: ${SITE_ADDRESS}

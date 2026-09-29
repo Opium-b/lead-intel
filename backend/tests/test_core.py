@@ -237,3 +237,69 @@ def test_motus_registration_and_insurance_signals():
     assert "INSURANCE_CANCELLATION" not in got([Fact(None, "fmcsa", "insurance_history", "h2", None, None,
                                                      {**cancel.payload, "filing_status_reason": "TERM/REPL"})])
     assert "INSURANCE_CANCELLATION" not in got([cancel, new_policy])
+
+
+def test_daily_decision_signals():
+    def f(record_type: str, ext: str, **payload) -> Fact:
+        return Fact(None, "fmcsa", record_type, ext, None, None, {"docket_number": "MC70887654", **payload})
+
+    prop = "Motor Carrier of Property (Except Household Goods)"
+    got = lambda fs: {s.type: s for s in detect(fs, TODAY)}  # noqa: E731
+
+    back = f("authority_status", "r", op_auth_type=prop, op_auth_status="Active", status_change_date=ago(3),
+             reason="Reinstated - insurance coverage restored")
+    assert "insurance coverage restored" in got([back])["REINSTATED_AUTHORITY"].description
+    fix = f("authority_status", "r", op_auth_type=prop, op_auth_status="Active", status_change_date=ago(3),
+            reason="Reinstated - legacy common/contract authority consolidation corrected (MOTUS Issue #220)")
+    assert "REINSTATED_AUTHORITY" not in got([fix])  # FMCSA's own data fix
+
+    published = f("authority_status", "p", op_auth_type=prop, op_auth_status="Pending", status_change_date=ago(5),
+                  reason="Published to FMCSA Register")
+    assert "REGISTER_PUBLISHED" in got([published])
+    granted = f("authority_status", "g", op_auth_type=prop, op_auth_status="Active", status_change_date=ago(1),
+                reason="Granted")
+    assert "REGISTER_PUBLISHED" not in got([published, granted])  # granted since: NEW_AUTHORITY instead
+
+    revoked = f("authority_status", "x", op_auth_type=prop, op_auth_status="Inactive", status_change_date=ago(4),
+                reason="Revoked")
+    assert "AUTHORITY_REVOKED" in got([revoked])
+    vol = f("authority_order", "v", op_auth_type=prop, order1_serve_date=ago(2), order1_effective_date=ago(-28),
+            order1_type_desc="Notice Of Operating Authority Voluntary Suspension")
+    assert set(got([vol])) == {"VOLUNTARY_SUSPENSION"}  # not a SUSPENSION_NOTICE (that's involuntary)
+    renamed = f("insurance_history", "n", filing_status_reason="NAMECHG", ins_type_desc="BIPD", cancl_effective_date=ago(6))
+    assert "NAME_CHANGE" in got([renamed])
+
+    legacy = Fact(None, "fmcsa", "authority", "MC70887654:0", None, None, {  # same revocation, old L&I dataset
+        "docket_number": "MC70887654", "disp_action_desc": "REVOKED", "disp_served_date": ago(4), "mod_col_1": "COMMON"})
+    assert sum(s.type == "AUTHORITY_REVOKED" for s in detect([revoked, legacy], TODAY)) == 1
+
+
+def test_decision_companies_skip_fleet_minimum():
+    from app.collectors.fmcsa import FmcsaCollector
+
+    c = FmcsaCollector(client=object())
+    broker = {"status_code": "A", "power_units": "0", "add_date": "20200101"}
+    assert not c._in_target(broker) and c._in_target(broker, decision=True)
+    assert c._in_target({"status_code": "I", "power_units": "3"}, decision=True)  # suspended/inactive still a lead
+    assert not c._in_target({"status_code": "A", "power_units": "9000"}, decision=True)  # fleet ceiling still applies
+
+
+def test_daily_report_categories():
+    from app.daily_report import categorize
+
+    prop, broker = "Motor Carrier of Property (Except Household Goods)", "Broker of Property (Except Household Goods)"
+    auth = [{"reason": "Granted", "op_auth_type": prop}, {"reason": "Granted", "op_auth_type": broker},
+            {"reason": "Granted", "op_auth_type": "Mexico Domiciled Motor Carrier of Property (Except Household Goods)"},
+            {"reason": "Granted", "op_auth_type": "Motor Carrier of Passengers"},
+            {"reason": "Published to FMCSA Register", "op_auth_type": prop},
+            {"reason": "Reinstated", "op_auth_type": prop}, {"reason": "Initial Status", "op_auth_type": prop},
+            {"reason": "GRANTED", "op_auth_type": prop},  # upper-case variant
+            {"reason": "Involuntary Suspension - insurance cancellation effective", "op_auth_type": prop}]
+    orders = [{"order1_type_desc": "Operating Authority Involuntary Suspension Notice", "op_auth_type": broker}]
+    ins = [{"filing_status_reason": "CANCEL", "ins_type_desc": "SURETY"},
+           {"filing_status_reason": "NAMECHG", "cancl_effective_date": "20260920"},
+           {"filing_status_reason": "NAMECHG", "cancl_effective_date": "20261020"}]  # after the period
+    n = {k: len(v) for k, v in categorize(auth, orders, ins, "20260915", "20260929").items()}
+    assert n == {"1 Daily Register": 3, "2 Certificates of Authority": 3, "3 OP-2 MX Commercial Zone": 1,
+                 "4 Regular Routes (passenger)": 1, "5 Name Changes": 1, "6 Reinstatements": 1, "7 Transfers": 0,
+                 "8 Broker-FF Financial Security": 2}

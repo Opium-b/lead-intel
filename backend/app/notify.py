@@ -130,6 +130,19 @@ class TelegramNotifier:
         if not body.get("ok"):
             raise RuntimeError(f"telegram rejected message: {r.status_code} {body.get('description', '')}")
 
+    def send_document(self, path, caption: str) -> None:
+        """Upload a file (max 50 MB) with an HTML caption. Same error contract as send()."""
+        try:
+            with open(path, "rb") as f:
+                r = self.client.post(f"https://api.telegram.org/bot{self.token}/sendDocument", timeout=120,
+                                     data={"chat_id": self.chat_id, "caption": caption[:1024], "parse_mode": "HTML"},
+                                     files={"document": (path.name, f)})
+            body = r.json()
+        except (httpx.HTTPError, ValueError) as e:
+            raise RuntimeError(f"telegram unreachable: {type(e).__name__}") from None
+        if not body.get("ok"):
+            raise RuntimeError(f"telegram rejected document: {r.status_code} {body.get('description', '')}")
+
 
 def notify_qualified_leads(db: Session, notifier: TelegramNotifier | None = None,
                            min_score: int | None = None, limit: int | None = None) -> dict | None:

@@ -4,7 +4,7 @@ To add a rule: write a class with `name` and `evaluate(facts, today)`, append it
 """
 from datetime import date, timedelta
 
-from app.collectors.fmcsa import parse_date, parse_int
+from app.collectors.fmcsa import docket_id, parse_date, parse_int
 from app.signals.base import Fact, SignalDraft
 
 WINDOW = timedelta(days=365)
@@ -236,6 +236,15 @@ class AuthorityRevokedRule:
                            f"{f.payload['disp_action_desc'].lower()} on {served}", "high", _pick(f, *AUTHORITY_FIELDS))
                 s.observed_at = served
                 out.append(s)
+        seen = {docket_id(s_.evidence.get("docket_number")) for s_ in out}
+        for f in _motus_latest(facts).values():  # Motus revocations, unless already reported above
+            d = parse_date(f.payload.get("status_change_date"))
+            if f.payload.get("reason") == "Revoked" and d and (today - d).days <= 365 and _docket(f) not in seen:
+                s = _draft(self.name, "AUTHORITY_REVOKED", f, f"Operating authority {_docket(f)} "
+                           f"({f.payload.get('op_auth_type', '').lower()}) revoked on {d}", "high",
+                           _pick(f, *MOTUS_STATUS_FIELDS))
+                s.observed_at = d
+                out.append(s)
         return out
 
 
@@ -243,7 +252,7 @@ MOTUS_STATUS_FIELDS = ("docket_number", "usdot_number", "op_auth_type", "op_auth
 
 
 def _docket(f: Fact) -> str:
-    return (f.payload.get("docket_number") or "").replace("-", "")
+    return docket_id(f.payload.get("docket_number"))
 
 
 def _auth_key(f: Fact) -> tuple[str, str]:
@@ -360,6 +369,89 @@ def _money(v) -> float:
         return float(v)
     except (TypeError, ValueError):
         return 0.0
+
+
+class ReinstatedRule:
+    """Authority reinstated, usually because insurance is back on file: a carrier restarting operations.
+    FMCSA's own 'MOTUS Issue #220' data fix is not a reinstatement."""
+
+    name = "ReinstatedRule"
+    days = 30
+
+    def evaluate(self, facts, today):
+        out = []
+        for f in _motus_latest(facts).values():
+            reason, d = f.payload.get("reason") or "", parse_date(f.payload.get("status_change_date"))
+            if not reason.startswith("Reinstated") or "#220" in reason or not d or (today - d).days > self.days:
+                continue
+            s = _draft(self.name, "REINSTATED_AUTHORITY", f,
+                       f"Authority {_docket(f)} ({f.payload.get('op_auth_type', '').lower()}) reinstated {d}"
+                       + (f": {reason.split(' - ', 1)[1]}" if " - " in reason else ""), "medium",
+                       _pick(f, *MOTUS_STATUS_FIELDS))
+            s.observed_at = d
+            out.append(s)
+        return out
+
+
+class RegisterPublishedRule:
+    """Application published in the FMCSA Register: a new carrier/broker weeks away from its grant."""
+
+    name = "RegisterPublishedRule"
+    days = 60
+
+    def evaluate(self, facts, today):
+        out = []
+        for f in _motus_latest(facts).values():
+            d = parse_date(f.payload.get("status_change_date"))
+            if (f.payload.get("reason") != "Published to FMCSA Register" or f.payload.get("op_auth_status") != "Pending"
+                    or not d or (today - d).days > self.days):
+                continue
+            s = _draft(self.name, "REGISTER_PUBLISHED", f,
+                       f"Application for {_docket(f)} ({f.payload.get('op_auth_type', '').lower()}) published in the "
+                       f"FMCSA Register {d}; authority not granted yet", "medium", _pick(f, *MOTUS_STATUS_FIELDS))
+            s.observed_at = d
+            out.append(s)
+        return out
+
+
+class VoluntarySuspensionRule:
+    name = "VoluntarySuspensionRule"
+    days = 30
+
+    def evaluate(self, facts, today):
+        out = []
+        for f in facts:
+            kind = f.payload.get("order1_type_desc") or ""
+            served = parse_date(f.payload.get("order1_serve_date")) if f.record_type == "authority_order" else None
+            if not served or "Voluntary" not in kind or "Involuntary" in kind or (today - served).days > self.days:
+                continue
+            s = _draft(self.name, "VOLUNTARY_SUSPENSION", f,
+                       f"Carrier asked to suspend authority {_docket(f)}: notice served {served}, effective "
+                       f"{parse_date(f.payload.get('order1_effective_date'))}", "low",
+                       _pick(f, "docket_number", "op_auth_type", "order1_type_desc", "order1_serve_date",
+                             "order1_effective_date"))
+            s.observed_at = served
+            out.append(s)
+        return out
+
+
+class NameChangeRule:
+    """Insurance filing re-issued under a new company name (Motus publishes no name-change decisions)."""
+
+    name = "NameChangeRule"
+    days = 60
+
+    def evaluate(self, facts, today):
+        out = []
+        for f in facts:
+            d = parse_date(f.payload.get("cancl_effective_date")) if f.record_type == "insurance_history" else None
+            if not d or f.payload.get("filing_status_reason") != "NAMECHG" or not 0 <= (today - d).days <= self.days:
+                continue
+            s = _draft(self.name, "NAME_CHANGE", f, f"Company name changed on its authority {_docket(f)} ({d})", "low",
+                       _pick(f, *INSURANCE_FIELDS))
+            s.observed_at, s.dedupe_key = d, f"NAME_CHANGE:{_docket(f)}:{d}"
+            out.append(s)
+        return out
 
 
 class InsuranceNeededRule:
@@ -536,7 +628,8 @@ class HiringRule:
 RULES = [OutOfServiceRule(), InspectionViolationRule(), RepeatedViolationRule(), HighOutOfServiceRateRule(),
          CrashRule(), NewCarrierRule(), StaleRegistrationRule(), InactiveStatusRule(), ViolationCategoryRule(),
          AuthorityRevokedRule(), NewAuthorityRule(), InsuranceSuspendedRule(), SuspensionNoticeRule(),
-         InsuranceNeededRule(), InsuranceCancellationRule(), InsuranceRenewalRule(),
+         InsuranceNeededRule(), InsuranceCancellationRule(), InsuranceRenewalRule(), ReinstatedRule(),
+         RegisterPublishedRule(), VoluntarySuspensionRule(), NameChangeRule(),
          HazmatCarrierRule(), CensusChangeRule(), HiringRule()]
 
 

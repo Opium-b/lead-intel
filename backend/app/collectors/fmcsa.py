@@ -73,6 +73,11 @@ def _pad(dot: str) -> str:
     return dot.zfill(8)
 
 
+def docket_id(v: str | None) -> str:
+    """Motus writes dockets both as 'MC-123' and 'MC123'."""
+    return (v or "").replace("-", "")
+
+
 def _unpad(dot: str | None) -> str:
     return str(int(dot)) if dot and dot.isdigit() else ""
 
@@ -106,14 +111,17 @@ class FmcsaCollector:
         self.new_min_fleet = s.target_new_carrier_min_fleet
         self.active_only = s.target_active_only
 
-    def _in_target(self, r: dict, small_ok: bool = False) -> bool:
-        """small_ok: found via a registration/insurance event, where 1-4 truck carriers are the market too."""
+    def _in_target(self, r: dict, decision: bool = False) -> bool:
+        """decision: named in an FMCSA registration/insurance decision. Every one of those is a lead
+        (brokers with 0 trucks, suspended or inactive carriers included); only the fleet ceiling applies."""
+        units = parse_int(r.get("power_units")) or 0
+        if decision:
+            return units <= self.max_fleet
         if self.active_only and r.get("status_code") != "A":
             return False
-        units = parse_int(r.get("power_units")) or 0
         added = parse_date(r.get("add_date"))
         is_new = added is not None and (date.today() - added).days <= NEW_CARRIER_DAYS
-        return (self.new_min_fleet if is_new or small_ok else self.min_fleet) <= units <= self.max_fleet
+        return (self.new_min_fleet if is_new else self.min_fleet) <= units <= self.max_fleet
 
     def _get(self, dataset: str, where: str, limit: int | None = None, order: str = ":id",
              select: str | None = None) -> list[dict]:
@@ -155,21 +163,29 @@ class FmcsaCollector:
             max(limit // 4, 1), order="add_date DESC", select="dot_number",
         )
 
-        def motus(where: str, n: int, datasets=(MOTUS_AUTHORITY, MOTUS_AUTHORITY_DAILY),
+        def motus(where: str, n: int | None = None, datasets=(MOTUS_AUTHORITY, MOTUS_AUTHORITY_DAILY),
                   order: str = "status_change_date DESC") -> list[str]:
             return [r["usdot_number"] for ds in datasets
                     for r in self._get(ds, where, n, order=order, select="usdot_number")]
 
-        # Registration decisions (what FMCSA's daily decisions page publishes as letters)
-        granted = motus(f"reason in ('Granted', 'GRANTED') AND status_change_date >= '{since_s}'", limit)
-        pending = motus(f"op_auth_status = 'Pending' AND status_change_date >= '{since_s}'", max(limit // 2, 1))
-        # Insurance problems: suspended for lapsed insurance, suspension notices, cancellations coming up
-        # still-suspended carriers stay leads, so this looks back a fixed window rather than from the cursor
-        suspended = motus("reason like 'Involuntary Suspension%insurance%' AND status_change_date >= "
-                          f"'{date.today() - timedelta(days=60):%Y%m%d}'", max(limit // 2, 1))
-        noticed = motus(f"order1_type_desc like '%Involuntary%' AND order1_serve_date >= '{since_s}'",
-                        max(limit // 2, 1), (MOTUS_ORDERS, MOTUS_ORDERS_DAILY), "order1_serve_date DESC")
+        # Everything FMCSA's "Daily Registration Decisions" page used to publish (it stopped 2026-05-20; Motus
+        # carries the same decisions). Uncapped: the date window bounds it (~1,000 DOTs a day nationwide).
+        # Certificates of authority (all types, incl. brokers, MX OP-2, passenger), Register publications,
+        # reinstatements (not FMCSA's own Issue #220 data fix), revocations and suspensions
+        granted = motus(f"reason in ('Granted', 'GRANTED') AND status_change_date >= '{since_s}'")
+        pending = motus(f"op_auth_status = 'Pending' AND status_change_date >= '{since_s}'")
+        reinstated = motus(f"reason like 'Reinstated%' AND reason not like '%#220%' AND status_change_date >= '{since_s}'")
+        suspended = motus("(reason like 'Involuntary Suspension%' OR reason in ('Revoked', 'Out of Service')) AND "
+                          f"status_change_date >= '{since_s}'")
+        # suspension notices, voluntary and involuntary, carriers and brokers / freight forwarders
+        noticed = motus(f"order1_serve_date >= '{since_s}'", None, (MOTUS_ORDERS, MOTUS_ORDERS_DAILY), "order1_serve_date DESC")
         today = date.today()
+        # broker / freight forwarder financial security (bond, trust fund) cancellations and name changes
+        bonds = motus(f"ins_type_desc in ('SURETY', 'TRUST FUND') AND filing_status_reason = 'CANCEL' AND "
+                      f"cancl_effective_date between '{since_s}' and '{today + timedelta(days=30):%Y%m%d}'",
+                      None, (MOTUS_INSURANCE_HISTORY,), "cancl_effective_date")
+        renamed = motus(f"filing_status_reason = 'NAMECHG' AND cancl_effective_date >= '{since_s}'",
+                        None, (MOTUS_INSURANCE_HISTORY,), "cancl_effective_date")
         lo, hi = today - timedelta(days=7), today + timedelta(days=45)
         # ponytail: no filing date in these sets, so each run re-reads the upcoming window (capped); tracked
         # companies just get refreshed. A cursor needs a filing date FMCSA doesn't publish.
@@ -181,16 +197,16 @@ class FmcsaCollector:
             INSURANCE, " OR ".join(f"cancl_effective_date like '{m}'" for m in months),
             max(limit // 2, 1), select="dot_number")]
 
-        small_ok = set(granted + pending + suspended + noticed + cancelling)
-        found = [r["dot_number"] for r in flagged + new_carriers] + granted + pending + suspended + noticed + cancelling
+        decided = granted + pending + reinstated + suspended + noticed + bonds + renamed
+        found = [r["dot_number"] for r in flagged + new_carriers] + decided + cancelling
         dots = list(dict.fromkeys(d for d in found if d and d.isdigit()))
-        log.info("fmcsa discovery: %d flagged inspections, %d new carriers, %d granted, %d pending, "
-                 "%d insurance-suspended, %d suspension notices, %d cancelling insurance, %d unique DOTs",
-                 len(flagged), len(new_carriers), len(granted), len(pending), len(suspended), len(noticed),
-                 len(cancelling), len(dots))
-        return self.fetch_companies(dots, small_ok=small_ok)
+        log.info("fmcsa discovery: %d flagged inspections, %d new carriers, %d granted, %d pending, %d reinstated, "
+                 "%d suspended/revoked, %d suspension notices, %d bond cancellations, %d name changes, "
+                 "%d cancelling insurance, %d unique DOTs", len(flagged), len(new_carriers), len(granted), len(pending),
+                 len(reinstated), len(suspended), len(noticed), len(bonds), len(renamed), len(cancelling), len(dots))
+        return self.fetch_companies(dots, decided=set(decided))
 
-    def fetch_companies(self, dots: list[str], apply_target: bool = True, small_ok: set[str] = frozenset()) -> RawFmcsa:
+    def fetch_companies(self, dots: list[str], apply_target: bool = True, decided: set[str] = frozenset()) -> RawFmcsa:
         """Profile + full recent history for specific DOT numbers.
 
         Discovery applies the target profile; refresh doesn't, so tracked companies that change
@@ -199,7 +215,7 @@ class FmcsaCollector:
         raw = RawFmcsa()
         for i in range(0, len(dots), CHUNK):
             raw.census += [r for r in self._get(CENSUS, f"dot_number in ({_in(dots[i : i + CHUNK])})")
-                           if not apply_target or self._in_target(r)]
+                           if not apply_target or self._in_target(r, r.get("dot_number") in decided)]
         targets = [r["dot_number"] for r in raw.census]
         log.info("fmcsa profiles: kept %d of %d DOTs", len(targets), len(dots))
 
@@ -234,7 +250,7 @@ class FmcsaCollector:
                 mc[dot] = docket
 
         for r in sorted(raw.motus_authority, key=lambda r: r.get("status_change_date", "")):
-            dot, docket = r.get("usdot_number", ""), (r.get("docket_number") or "").replace("-", "")
+            dot, docket = r.get("usdot_number", ""), docket_id(r.get("docket_number"))
             if docket.startswith("MC") and r.get("op_auth_status") in ("Active", "Pending") and dot not in mc:
                 mc[dot] = docket
 

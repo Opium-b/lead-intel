@@ -29,6 +29,8 @@ npm install && npm run dev                  # http://localhost:5173, sign in wit
 | `uv run python -m app.cli enrich` | find websites + contacts for due leads (also runs after every `run`) |
 | `uv run python -m app.cli notify [--test]` | send pending Telegram alerts (also runs after every `run`); `--test` checks the bot |
 | `uv run python -m app.cli summarize` | AI briefs for leads whose facts changed (also runs after every `run`) |
+| `uv run python -m app.cli report [--date YYYY-MM-DD] [--once]` | FMCSA daily registration decisions (all 8 categories of FMCSA's old decisions page) as Excel, sent to Telegram; `--once` skips a day already sent |
+| `deploy/mac-daily.sh` | daily `run` + `report --once` on a Mac (launchd `~/Library/LaunchAgents/com.leadintel.daily.plist`, 20:00) until a server runs the Docker scheduler |
 | `uv run python -m app.cli reprocess` | re-derive signals and scores after changing rules/weights |
 | `uv run pytest` | backend tests (uses `leadintel_test` DB) |
 | `PUT /api/scoring-rules/{key}` | change a weight, then `POST /api/admin/reprocess` |

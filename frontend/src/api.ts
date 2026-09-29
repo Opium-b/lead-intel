@@ -137,7 +137,9 @@ export const SIGNAL_LABELS: Record<string, string> = {
   FLEET_GROWTH: 'Growing fleet', FLEET_SHRINK: 'Shrinking fleet', DRIVER_GROWTH: 'Adding drivers',
   HIRING_DRIVERS: 'Hiring drivers', REACTIVATED: 'Reactivated carrier',
   INSURANCE_SUSPENDED: 'Suspended: no insurance', SUSPENSION_NOTICE: 'Suspension notice',
-  INSURANCE_NEEDED: 'Pending: no insurance filed',
+  INSURANCE_NEEDED: 'Pending: no insurance filed', REINSTATED_AUTHORITY: 'Authority reinstated',
+  REGISTER_PUBLISHED: 'Published in FMCSA Register', VOLUNTARY_SUSPENSION: 'Voluntary suspension',
+  NAME_CHANGE: 'Company name change',
 }
 export const signalLabel = (t: string) => SIGNAL_LABELS[t] ?? t.toLowerCase().replace(/_/g, ' ').replace(/^\w/, (c) => c.toUpperCase())
 export const scoreClass = (s: number) => (s >= 70 ? 'score-high' : s >= 40 ? 'score-mid' : 'score-low')
