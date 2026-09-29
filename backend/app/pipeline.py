@@ -33,6 +33,17 @@ def _hash(payload: dict) -> str:
     return hashlib.sha256(json.dumps(payload, sort_keys=True, default=str).encode()).hexdigest()
 
 
+EXTERNAL_ID_MAX = 128  # source_records.external_id
+
+
+def _external_id(v: str) -> str:
+    """Ids built from source fields (policy numbers, authority types...) can exceed the column: keep a readable
+    prefix and make the rest a hash, so distinct long ids stay distinct and the same id always maps the same way."""
+    if len(v) <= EXTERNAL_ID_MAX:
+        return v
+    return f"{v[:EXTERNAL_ID_MAX - 41]}#{hashlib.sha1(v.encode()).hexdigest()}"
+
+
 TRACKED_CENSUS = ("power_units", "total_drivers", "status_code")
 
 
@@ -81,7 +92,7 @@ def ingest(db: Session, batch: NormalizedBatch) -> list[int]:
                      source_url=ct.source_url) for ct in c.contacts
             ]).on_conflict_do_nothing(index_elements=["company_id", "type", "value"]))
 
-    rows = [dict(source=e.source, record_type=e.record_type, external_id=e.external_id,
+    rows = [dict(source=e.source, record_type=e.record_type, external_id=_external_id(e.external_id),
                  company_id=ids[e.company_dot], observed_at=e.observed_at, source_url=e.source_url,
                  payload=e.payload, payload_hash=_hash(e.payload))
             for e in batch.events if e.company_dot in ids]

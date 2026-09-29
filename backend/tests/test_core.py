@@ -303,3 +303,11 @@ def test_daily_report_categories():
     assert n == {"1 Daily Register": 3, "2 Certificates of Authority": 3, "3 OP-2 MX Commercial Zone": 1,
                  "4 Regular Routes (passenger)": 1, "5 Name Changes": 1, "6 Reinstatements": 1, "7 Transfers": 0,
                  "8 Broker-FF Financial Security": 2}
+
+
+def test_long_external_ids_fit_and_stay_distinct():
+    from app.pipeline import EXTERNAL_ID_MAX, _external_id
+
+    a, b = "motus:" + "X" * 200 + ":1", "motus:" + "X" * 200 + ":2"
+    assert len(_external_id(a)) <= EXTERNAL_ID_MAX and _external_id(a) != _external_id(b)
+    assert _external_id(a) == _external_id(a) and _external_id("short") == "short"
