@@ -313,7 +313,9 @@ class FmcsaCollector:
                 dot = r.get("usdot_number", "")
                 if dot not in known:
                     continue
-                ext = "motus:" + ":".join(str(r.get(k, "")) for k in id_keys)
+                # the DOT is part of the id: some rows (voluntary suspension notices) have no docket, and
+                # without it every company served the same day would share one id and overwrite each other
+                ext = f"motus:{dot}:" + ":".join(str(r.get(k, "")) for k in id_keys)
                 events.append(EventRecord(SOURCE, record_type, ext, dot, parse_date(r.get(date_key)),
                                           row_url(dataset, "usdot_number", dot), r))
 

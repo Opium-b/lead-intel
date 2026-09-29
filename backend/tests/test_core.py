@@ -311,3 +311,13 @@ def test_long_external_ids_fit_and_stay_distinct():
     a, b = "motus:" + "X" * 200 + ":1", "motus:" + "X" * 200 + ":2"
     assert len(_external_id(a)) <= EXTERNAL_ID_MAX and _external_id(a) != _external_id(b)
     assert _external_id(a) == _external_id(a) and _external_id("short") == "short"
+
+
+def test_motus_rows_without_docket_stay_per_company():
+    from app.collectors.fmcsa import FmcsaCollector, RawFmcsa
+
+    census = [{"dot_number": d, "legal_name": f"CARRIER {d}"} for d in ("111", "222")]
+    notice = {"order1_type_desc": "Notice Of Operating Authority Voluntary Suspension", "order1_serve_date": "20260920"}
+    raw = RawFmcsa(census=census, motus_orders=[{**notice, "usdot_number": "111"}, {**notice, "usdot_number": "222"}])
+    ids = [e.external_id for e in FmcsaCollector(client=object()).normalize(raw).events if e.record_type == "authority_order"]
+    assert len(set(ids)) == 2  # same day, no docket: still one fact per company
