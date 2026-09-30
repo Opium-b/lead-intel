@@ -1,0 +1,156 @@
+@page "/analytics"
+@attribute [Authorize]
+@rendermode InteractiveServer
+@inject LeadService Leads
+
+<PageTitle>Analytics · Lead Intel</PageTitle>
+<h1>Analytics</h1>
+<p class="muted">What actually turns into deals, from the statuses you log. Won = Qualified or Converted; lost = Declined or Disqualified.</p>
+@if (error is not null)
+{
+    <p class="error">@error</p>
+}
+@if (data is { } d)
+{
+    var decided = d.Totals.Won + d.Totals.Lost;
+    <section class="tiles">
+        <div class="tile"><span class="num">@d.Totals.Leads</span><span>Leads</span></div>
+        <div class="tile"><span class="num">@d.Totals.Worked</span><span>Worked (contacted in any way)</span></div>
+        <div class="tile"><span class="num">@d.Totals.Won</span><span>Won</span></div>
+        <div class="tile"><span class="num">@d.Totals.Lost</span><span>Lost</span></div>
+        <div class="tile"><span class="num">@Ui.Pct(d.Totals.WinRate)</span><span>Win rate (won ÷ won + lost)</span></div>
+    </section>
+
+    @if (decided < d.Thresholds.MinDecidedTotal)
+    {
+        <p class="card muted">
+            Only @decided lead(s) won or lost so far. Keep logging outcomes on lead pages — weight suggestions appear
+            after @d.Thresholds.MinDecidedTotal decided leads, with at least @d.Thresholds.MinDecidedWithSignal per signal.
+        </p>
+    }
+
+    @if (d.Suggestions.Count > 0)
+    {
+        <section class="card">
+            <h2>Suggested score weights</h2>
+            <p class="muted small">Based on how often leads with each signal were won compared to your average. Applying re-scores every lead.</p>
+            <table class="data">
+                <thead><tr><th>Rule</th><th>Current</th><th>Suggested</th><th>Why</th><th></th></tr></thead>
+                <tbody>
+                    @foreach (var s in d.Suggestions)
+                    {
+                        <tr>
+                            <td>@s.Label</td><td class="mono">@s.Current</td><td class="mono"><b>@s.Suggested</b></td>
+                            <td class="small muted">@s.Reason</td>
+                            <td><button disabled="@(applying is not null)" @onclick="() => Apply(s.Key, s.Suggested)">@(applying == s.Key ? "Applying…" : "Apply")</button></td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+            @if (applied) { <p class="small">Applied — scores are being recalculated in the background.</p> }
+        </section>
+    }
+
+    <div class="grid-2">
+        <section class="card">
+            <h2>Funnel</h2>
+            <table class="plain">
+                @foreach (var s in Ui.Statuses)
+                {
+                    <tr><td>@Ui.Status(s)</td><td class="mono num-cell">@d.Funnel.GetValueOrDefault(s)</td></tr>
+                }
+            </table>
+        </section>
+        <section class="card">
+            <h2>Does the score predict wins?</h2>
+            <table class="data">
+                <thead><tr><th>Score</th><th>Leads</th><th>Won</th><th>Lost</th><th>Win rate</th></tr></thead>
+                <tbody>
+                    @foreach (var b in d.ByScoreBand)
+                    {
+                        <tr>
+                            <td class="mono">@b.Band</td><td>@b.Leads</td><td>@b.Won</td><td>@b.Lost</td>
+                            <td><span class="rate"><span class="bar" style="width: @Width(b.WinRate)"></span></span>@Ui.Pct(b.WinRate)</td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        </section>
+    </div>
+
+    <section class="card">
+        <h2>Win rate by signal</h2>
+        @{ var worked = d.BySignal.Where(r => r.Worked > 0).ToList(); }
+        @if (worked.Count == 0)
+        {
+            <p class="muted">No worked leads yet.</p>
+        }
+        else
+        {
+            <table class="data">
+                <thead><tr><th>Signal</th><th>Leads</th><th>Worked</th><th>Won</th><th>Lost</th><th>Win rate</th>
+                    <th title="Win rate vs your average, adjusted for small samples. Above 1 = better than average.">Lift</th></tr></thead>
+                <tbody>
+                    @foreach (var r in worked)
+                    {
+                        <tr>
+                            <td>@Ui.Signal(r.Type)</td><td>@r.Leads</td><td>@r.Worked</td><td>@r.Won</td><td>@r.Lost</td>
+                            <td><span class="rate"><span class="bar" style="width: @Width(r.WinRate)"></span></span>@Ui.Pct(r.WinRate)</td>
+                            <td class="mono">@r.Lift.ToString("0.00")</td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        }
+    </section>
+
+    <section class="card">
+        <h2>Contact channels</h2>
+        @if (d.ByChannel.Count == 0)
+        {
+            <p class="muted">No contacts logged with a channel yet. Pick “Via” when you log a contact.</p>
+        }
+        else
+        {
+            <table class="data">
+                <thead><tr><th>Channel</th><th>Attempts</th><th>No answer</th><th>Won</th><th>Lost</th></tr></thead>
+                <tbody>
+                    @foreach (var c in d.ByChannel)
+                    {
+                        <tr><td>@Ui.Channels.GetValueOrDefault(c.Channel, c.Channel)</td><td>@c.Attempts</td><td>@c.NoAnswer</td><td>@c.Won</td><td>@c.Lost</td></tr>
+                    }
+                </tbody>
+            </table>
+        }
+    </section>
+}
+
+@code {
+    Analytics? data;
+    string? error, applying;
+    bool applied;
+
+    protected override Task OnInitializedAsync() => Load();
+
+    async Task Load()
+    {
+        try { data = await Leads.AnalyticsAsync(); }
+        catch (Exception e) { error = e.Message; }
+    }
+
+    static string Width(double? rate) => FormattableString.Invariant($"{(rate ?? 0) * 100:0.#}%");
+
+    async Task Apply(string key, int weight)
+    {
+        applying = key;
+        try
+        {
+            await Leads.UpdateRuleAsync(key, new ScoringRuleUpdate(Weight: weight));
+            Leads.StartReprocess();
+            applied = true;
+            await Load();
+        }
+        catch (Exception e) { error = e.Message; }
+        applying = null;
+    }
+}

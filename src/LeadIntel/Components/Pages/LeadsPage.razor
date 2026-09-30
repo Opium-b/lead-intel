@@ -1,0 +1,140 @@
+@page "/leads"
+@attribute [Authorize]
+@rendermode InteractiveServer
+@inject LeadService Leads
+@inject NavigationManager Nav
+
+<PageTitle>Leads · Lead Intel</PageTitle>
+<h1>Leads @if (data is not null) { <span class="muted">(@data.Total)</span> }</h1>
+
+<form class="filters" @onsubmit="Reload" @onsubmit:preventDefault>
+    <input type="search" placeholder="Search name, DOT or MC" aria-label="Search" @bind="q" @bind:after="Reload" />
+    <input maxlength="2" placeholder="State" aria-label="State" class="w-state" @bind="state" @bind:after="Reload" />
+    <select aria-label="Status" @bind="status" @bind:after="Reload">
+        <option value="">All statuses</option>
+        @foreach (var s in Ui.Statuses) { <option value="@s">@Ui.Status(s)</option> }
+    </select>
+    <select aria-label="Service line" @bind="ServiceLine" @bind:after="Reload">
+        <option value="">All service lines</option>
+        @foreach (var (key, line) in LeadIntel.Scoring.ServicesCatalog.Lines) { <option value="@key">@line.Label</option> }
+    </select>
+    <select aria-label="Signal type" @bind="SignalType" @bind:after="Reload">
+        <option value="">All signals</option>
+        @foreach (var (key, label) in Ui.SignalLabels) { <option value="@key">@label</option> }
+    </select>
+    <label class="range">Min score @minScore
+        <input type="range" min="0" max="100" step="5" @bind="minScore" @bind:after="Reload" />
+    </label>
+</form>
+@if (error is not null)
+{
+    <p class="error">@error</p>
+}
+
+<div class="table-wrap @(loading ? "loading" : "")">
+    <table class="data">
+        <thead>
+            <tr>
+                <th><button class="th" @onclick='() => SortBy("name")'>Company @Arrow("name")</button></th>
+                <th>DOT / MC</th>
+                <th><button class="th" @onclick='() => SortBy("state")'>Location @Arrow("state")</button></th>
+                <th><button class="th" @onclick='() => SortBy("added_at")'>Registered @Arrow("added_at")</button></th>
+                <th><button class="th" @onclick='() => SortBy("signals")'>Signals @Arrow("signals")</button></th>
+                <th>Pitch</th>
+                <th><button class="th" @onclick='() => SortBy("score")'>Score @Arrow("score")</button></th>
+                <th>Contact</th>
+                <th>Status</th>
+                <th><button class="th" @onclick='() => SortBy("updated_at")'>Updated @Arrow("updated_at")</button></th>
+            </tr>
+        </thead>
+        <tbody>
+            @foreach (var l in data?.Items ?? [])
+            {
+                <tr class="clickable" @onclick='() => Nav.NavigateTo($"leads/{l.Id}")'>
+                    <td><a href="leads/@l.Id" @onclick:stopPropagation>@l.Name</a>
+                        <div class="muted small">@(l.FleetSize?.ToString() ?? "?") trucks · @(l.Drivers?.ToString() ?? "?") drivers</div></td>
+                    <td class="mono">@l.DotNumber<div class="muted small">@l.McNumber</div></td>
+                    <td>@l.City@(l.City is not null && l.State is not null ? ", " : "")@l.State</td>
+                    <td class="small">@(l.AddedAt is null ? "" : Ui.Date(l.AddedAt))</td>
+                    <td><span class="muted small">@l.SignalCount ·</span>
+                        @foreach (var t in l.SignalTypes) { <span class="chip">@Ui.Signal(t)</span> }</td>
+                    <td class="small">
+                        @foreach (var k in l.ServiceLines.Take(3)) { <div class="pitch-line">@LineLabel(k)</div> }
+                        @if (l.ServiceLines.Count > 3) { <span class="muted">+@(l.ServiceLines.Count - 3) more</span> }
+                    </td>
+                    <td><span class="score-pill @Ui.ScoreClass(l.Score)">@l.Score</span></td>
+                    <td class="small">
+                        @if (l.Person is not null) { <b>@l.Person</b> }
+                        <div>@(l.Phone is null ? "" : Ui.Phone(l.Phone))</div><div class="muted">@l.Email</div>
+                    </td>
+                    <td><span class="status @l.Status.ToLowerInvariant()">@Ui.Status(l.Status)</span></td>
+                    <td class="small">@Ui.Date(l.UpdatedAt)</td>
+                </tr>
+            }
+            @if (data is { Items.Count: 0 })
+            {
+                <tr><td colspan="10" class="muted">No leads match these filters.</td></tr>
+            }
+        </tbody>
+    </table>
+</div>
+@if (data is not null)
+{
+    <nav class="pager">
+        <button disabled="@(page <= 1)" @onclick="() => Go(page - 1)">Previous</button>
+        <span>Page @(page) of @Pages</span>
+        <button disabled="@(page >= Pages)" @onclick="() => Go(page + 1)">Next</button>
+    </nav>
+}
+
+@code {
+    [SupplyParameterFromQuery(Name = "signal_type")] public string? SignalType { get; set; }
+    [SupplyParameterFromQuery(Name = "service_line")] public string? ServiceLine { get; set; }
+    string q = "", state = "", status = "", sort = "-score";
+    int minScore, page = 1;
+    const int PageSize = 25;
+    LeadPage? data;
+    string? error;
+    bool loading;
+
+    int Pages => Math.Max(1, (int)Math.Ceiling((data?.Total ?? 0) / (double)PageSize));
+    static string LineLabel(string k) => LeadIntel.Scoring.ServicesCatalog.Lines.TryGetValue(k, out var l) ? l.Label : k;
+
+    protected override Task OnInitializedAsync() => Load();
+
+    Task Reload()
+    {
+        page = 1;
+        return Load();
+    }
+
+    Task Go(int p)
+    {
+        page = p;
+        return Load();
+    }
+
+    Task SortBy(string col)
+    {
+        sort = sort == $"-{col}" ? col : $"-{col}";
+        return Load();
+    }
+
+    string Arrow(string col) => sort == $"-{col}" ? "▼" : sort == col ? "▲" : "";
+
+    async Task Load()
+    {
+        loading = true;
+        try
+        {
+            data = await Leads.ListAsync(new LeadFilter
+            {
+                Q = q, State = state, Status = status, MinScore = minScore, SignalType = SignalType, ServiceLine = ServiceLine,
+                Sort = sort, Page = page, PageSize = PageSize,
+            });
+            error = null;
+        }
+        catch (BadRequestException e) { error = e.Message; }
+        loading = false;
+    }
+}

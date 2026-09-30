@@ -1,4 +1,4 @@
-# Production: `docker compose up -d --build`. Settings: ./.env (compose) + ./backend/.env (app). See docs/DEPLOY.md.
+# Production: `docker compose up -d --build`. Settings: ./.env (compose) + ./src/LeadIntel/.env (app). See docs/DEPLOY.md.
 services:
   db:
     image: postgres:18-alpine  # same major as local dev, so dumps restore cleanly
@@ -13,35 +13,32 @@ services:
       interval: 5s
       retries: 20
 
-  api: &app
-    build: ./backend
+  # Dashboard + API. Every COLLECT_EVERY_HOURS it also collects, enriches, writes AI briefs, sends Telegram alerts
+  # and the FMCSA daily-decisions Excel (in-process scheduler).
+  app:
+    build: .
     restart: unless-stopped
-    env_file: ./backend/.env
+    env_file: ./src/LeadIntel/.env
     environment:
-      DATABASE_URL: postgresql+psycopg://leadintel:${POSTGRES_PASSWORD}@db/leadintel
+      DATABASE_URL: Host=db;Database=leadintel;Username=leadintel;Password=${POSTGRES_PASSWORD}
       FRONTEND_ORIGIN: ${SITE_ADDRESS}
+      COLLECT_EVERY_HOURS: ${COLLECT_EVERY_HOURS:-6}
+    volumes:
+      - keys:/home/app/.aspnet
+      - reports:/app/reports
     depends_on:
       db: {condition: service_healthy}
 
-  # Collection + enrichment + AI briefs + Telegram alerts every COLLECT_EVERY_HOURS; FMCSA daily-decisions Excel once a day.
-  scheduler:
-    <<: *app
-    depends_on:
-      api: {condition: service_started}  # api applies migrations first
-    command: ["sh", "-c", "sleep 60; while true; do python -m app.cli run || echo 'run failed'; python -m app.cli report --once || echo 'report failed'; sleep $${COLLECT_EVERY_HOURS:-6}h; done"]
-    environment:
-      DATABASE_URL: postgresql+psycopg://leadintel:${POSTGRES_PASSWORD}@db/leadintel
-      FRONTEND_ORIGIN: ${SITE_ADDRESS}
-      COLLECT_EVERY_HOURS: ${COLLECT_EVERY_HOURS:-6}
-
   web:
-    build: ./frontend
+    image: caddy:2-alpine
     restart: unless-stopped
     environment:
       SITE_ADDRESS: ${SITE_ADDRESS}
     ports: ["80:80", "443:443"]
-    volumes: [caddy_data:/data]
-    depends_on: [api]
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+    depends_on: [app]
 
   # Daily compressed dump, 14 kept, in ./backups on the host.
   backup:
@@ -57,3 +54,5 @@ services:
 volumes:
   pgdata:
   caddy_data:
+  keys:
+  reports:

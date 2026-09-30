@@ -1,0 +1,95 @@
+@page "/"
+@attribute [Authorize]
+@rendermode InteractiveServer
+@inject LeadService Leads
+
+<PageTitle>Overview · Lead Intel</PageTitle>
+<h1>Overview</h1>
+@if (error is not null)
+{
+    <p class="error">@error</p>
+}
+@if (data is { } d)
+{
+    <section class="tiles">
+        <div class="tile"><span class="num">@d.Companies</span><span>Companies discovered</span></div>
+        <div class="tile"><span class="num">@d.NewSignals7d</span><span>New signals (7 days)</span></div>
+        <a class="tile" href="leads"><span class="num">@d.Leads</span><span>Leads</span></a>
+        <div class="tile"><span class="num">@d.HighScoreLeads</span><span>High-score leads (≥ @d.HighScoreThreshold)</span></div>
+        <div class="tile"><span class="num">@d.QualifiedLeads</span><span>Qualified leads</span></div>
+        <div class="tile"><span class="num">@d.LeadsToday</span><span>Leads discovered today</span></div>
+    </section>
+
+    <div class="grid-2">
+        <section class="card">
+            <h2>Recent activity</h2>
+            @if (d.RecentActivity.Count == 0)
+            {
+                <p class="muted">No activity yet. Run a collection to discover leads.</p>
+            }
+            <ul class="feed">
+                @foreach (var e in d.RecentActivity)
+                {
+                    <li>
+                        <span class="score-pill @Ui.ScoreClass(e.Score)">@e.Score</span>
+                        <div>
+                            <a href="leads/@e.LeadId">@e.Company</a>
+                            <div class="muted small">@Describe(e) · @Ui.DateTime(e.CreatedAt)</div>
+                        </div>
+                    </li>
+                }
+            </ul>
+        </section>
+        <section class="card">
+            <h2>Signals by type</h2>
+            <table class="plain">
+                @foreach (var (type, n) in d.SignalsByType.OrderByDescending(kv => kv.Value))
+                {
+                    <tr>
+                        <td><a href="leads?signal_type=@type">@Ui.Signal(type)</a></td>
+                        <td class="right">@n</td>
+                    </tr>
+                }
+            </table>
+            <h2 class="mt">Last collection run</h2>
+            @if (d.LastRun is { } run)
+            {
+                <p class="small">
+                    #@run.Id · <b>@run.Status</b> · @Ui.DateTime(run.StartedAt)<br />
+                    <span class="muted">@Stat(run, "companies") companies, @Stat(run, "events") records</span>
+                </p>
+            }
+            else
+            {
+                <p class="muted small">Never run.</p>
+            }
+        </section>
+    </div>
+}
+
+@code {
+    Overview? data;
+    string? error;
+
+    protected override async Task OnInitializedAsync()
+    {
+        try { data = await Leads.OverviewAsync(); }
+        catch (Exception e) { error = e.Message; }
+    }
+
+    static string Stat(RunOut r, string key) => Json.Text(r.Stats.GetValueOrDefault(key)) ?? "0";
+
+    static string Describe(ActivityOut e) => e.EventType switch
+    {
+        "CREATED" => "New lead · " + string.Join(", ", SignalList(e.Meta)),
+        "SCORE_CHANGED" => $"Score {Ui.M(e.Meta, "from")} → {Ui.M(e.Meta, "to")}",
+        "STATUS_CHANGED" => $"Status {Ui.Status(Ui.M(e.Meta, "from"))} → {Ui.Status(Ui.M(e.Meta, "to"))}",
+        "SIGNALS_ADDED" => $"{Ui.M(e.Meta, "count")} new signal(s)",
+        "NOTE" => $"Note: {Ui.M(e.Meta, "text")}",
+        _ => e.EventType,
+    };
+
+    static IEnumerable<string> SignalList(Dictionary<string, object?> meta) =>
+        meta.GetValueOrDefault("signals") is System.Text.Json.JsonElement { ValueKind: System.Text.Json.JsonValueKind.Array } a
+            ? a.EnumerateArray().Select(x => Ui.Signal(x.GetString() ?? "")) : [];
+}

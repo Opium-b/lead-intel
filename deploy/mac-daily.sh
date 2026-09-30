@@ -3,8 +3,8 @@
 # collect FMCSA decisions -> leads -> enrichment -> Telegram alerts, then the daily-decisions Excel to Telegram.
 # ponytail: runs only while the Mac is on (launchd catches up after sleep); the server's scheduler replaces this.
 set -u
-export PATH="$HOME/.local/bin:/opt/homebrew/bin:$PATH"
-cd "${0:A:h}/../backend" || exit 1
+export PATH="/usr/local/share/dotnet:/opt/homebrew/bin:$PATH" DOTNET_CLI_TELEMETRY_OPTOUT=1
+cd "${0:A:h}/../src/LeadIntel" || exit 1
 echo "=== $(date) ==="
 
 # After an unclean shutdown postgres leaves postmaster.pid behind; if its PID now belongs to another
@@ -19,5 +19,6 @@ if ! pg_isready -q; then
   for i in {1..30}; do pg_isready -q && break; sleep 1; done
 fi
 
-uv run python -m app.cli run || echo "run failed"
-uv run python -m app.cli report --once || echo "report failed"
+dotnet build -v q --nologo || { echo "build failed"; exit 1; }
+dotnet run --no-build -- run || echo "run failed"
+dotnet run --no-build -- report --once || echo "report failed"

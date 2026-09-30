@@ -1,0 +1,37 @@
+@page "/login"
+@using Microsoft.AspNetCore.Authentication
+@inject Settings Settings
+@inject NavigationManager Nav
+
+<PageTitle>Sign in · Lead Intel</PageTitle>
+
+<form method="post" class="card login" @onsubmit="SignIn" @formname="login">
+    <AntiforgeryToken />
+    <h2>Sign in</h2>
+    <label for="token">API token</label>
+    <input id="token" name="Token" type="password" autocomplete="current-password" required />
+    @if (failed)
+    {
+        <p class="error">That token is not right.</p>
+    }
+    <button type="submit">Continue</button>
+</form>
+
+@code {
+    [CascadingParameter] HttpContext? HttpContext { get; set; }
+    [SupplyParameterFromForm] string? Token { get; set; }
+    [SupplyParameterFromQuery] string? ReturnUrl { get; set; }
+    bool failed;
+
+    async Task SignIn()
+    {
+        if (Token is null || !Api.SecretMatches(Token.Trim(), Settings))
+        {
+            failed = true;
+            return;
+        }
+        await HttpContext!.SignInAsync(Api.Operator(), new AuthenticationProperties { IsPersistent = true });
+        // local paths only: never redirect to another site
+        Nav.NavigateTo(ReturnUrl is { } r && r.StartsWith('/') && !r.StartsWith("//") ? r : "/", forceLoad: true);
+    }
+}

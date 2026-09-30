@@ -1,0 +1,12 @@
+# SITE_ADDRESS: "https://1-2-3-4.sslip.io" (free HTTPS without a domain), a real domain, or ":80" for local tests.
+{$SITE_ADDRESS}
+
+encode gzip
+header {
+	Strict-Transport-Security "max-age=31536000"
+	X-Content-Type-Options nosniff
+	Referrer-Policy no-referrer
+	-Server
+}
+# the C# app serves the dashboard (Blazor, over a WebSocket), the API and static files
+reverse_proxy app:8080

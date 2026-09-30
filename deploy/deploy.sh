@@ -8,7 +8,7 @@
 # provider's firewall; Docker-published ports bypass the host firewall, so none is configured here.
 #
 # Server settings are created once and never overwritten: /opt/leadintel/.env (generated DB password, site address)
-# and /opt/leadintel/backend/.env (copied from this Mac on the first run).
+# and /opt/leadintel/src/LeadIntel/.env (copied from this Mac on the first run).
 set -euo pipefail
 
 TARGET=${1:?usage: deploy/deploy.sh user@host [--with-data]}
@@ -29,17 +29,17 @@ ssh "$TARGET" 'set -e
   sudo mkdir -p /opt/leadintel && sudo chown "$(id -un)" /opt/leadintel'
 
 echo "==> code"
-rsync -az --delete --exclude .git --exclude node_modules --exclude .venv --exclude dist --exclude __pycache__ \
-  --exclude .pytest_cache --exclude .env --exclude backups ./ "$TARGET:$DIR/"
+rsync -az --delete --exclude .git --exclude bin --exclude obj --exclude .env --exclude backups --exclude reports \
+  --exclude backend --exclude frontend --exclude .playwright-mcp ./ "$TARGET:$DIR/"
 
 echo "==> settings (first run only)"
 if ! ssh "$TARGET" "test -f $DIR/.env"; then
   ssh "$TARGET" "umask 077; printf 'POSTGRES_PASSWORD=%s\nSITE_ADDRESS=https://%s.sslip.io\nCOLLECT_EVERY_HOURS=6\n' \
     \"\$(openssl rand -hex 24)\" '${HOST//./-}' > $DIR/.env"
 fi
-if ! ssh "$TARGET" "test -f $DIR/backend/.env"; then
-  scp -q backend/.env "$TARGET:$DIR/backend/.env"
-  ssh "$TARGET" "chmod 600 $DIR/backend/.env"
+if ! ssh "$TARGET" "test -f $DIR/src/LeadIntel/.env"; then
+  scp -q src/LeadIntel/.env "$TARGET:$DIR/src/LeadIntel/.env"
+  ssh "$TARGET" "chmod 600 $DIR/src/LeadIntel/.env"
 fi
 
 echo "==> build + start"
@@ -47,10 +47,10 @@ ssh "$TARGET" "cd $DIR && sudo docker compose up -d --build --remove-orphans"
 
 if [ "$WITH_DATA" = "--with-data" ]; then
   echo "==> copying this Mac's database to the server (replaces the server's data)"
-  ssh "$TARGET" "cd $DIR && sudo docker compose stop api scheduler"
+  ssh "$TARGET" "cd $DIR && sudo docker compose stop app"
   "$PG_DUMP" --no-owner --no-privileges -Fc leadintel \
     | ssh "$TARGET" "cd $DIR && sudo docker compose exec -T db pg_restore -U leadintel -d leadintel --clean --if-exists --no-owner"
-  ssh "$TARGET" "cd $DIR && sudo docker compose start api scheduler"
+  ssh "$TARGET" "cd $DIR && sudo docker compose start app"
 fi
 
 SITE=$(ssh "$TARGET" "grep ^SITE_ADDRESS= $DIR/.env | cut -d= -f2-")

@@ -1,0 +1,280 @@
+@page "/leads/{Id:int}"
+@attribute [Authorize]
+@rendermode InteractiveServer
+@inject LeadService Leads
+
+<PageTitle>@(lead?.Company.Name ?? "Lead") · Lead Intel</PageTitle>
+@if (error is not null)
+{
+    <p class="error">@error</p>
+}
+@if (lead is { } l)
+{
+    var c = l.Company;
+    <a href="leads" class="small">← Leads</a>
+    <header class="detail-head">
+        <div>
+            <h1>@c.Name</h1>
+            @if (c.DbaName is not null) { <p class="muted">DBA @c.DbaName</p> }
+        </div>
+        <div class="head-actions">
+            <span class="score-big @Ui.ScoreClass(l.Score)">@l.Score<small>/100</small></span>
+            <span class="status @l.Status.ToLowerInvariant()">@Ui.Status(l.Status)</span>
+        </div>
+    </header>
+
+    <section class="card ai-brief">
+        <h2>🤖 AI brief <span class="muted small">— written by Claude from the facts below; check before you rely on it</span></h2>
+        @if (l.AiSummary is { } ai)
+        {
+            <p>@ai.Summary</p>
+            <ul>@foreach (var t in ai.TalkingPoints) { <li>@t</li> }</ul>
+            <p><b>Opener:</b> “@ai.Opener”</p>
+            <p class="muted small">@ai.Model · @Ui.DateTime(l.AiSummaryAt)</p>
+        }
+        else
+        {
+            <p class="muted">No brief yet.</p>
+        }
+        <button class="link" disabled="@briefing" @onclick="RegenerateBrief">@(briefing ? "Writing…" : l.AiSummary is null ? "Write brief" : "Regenerate")</button>
+    </section>
+
+    <section class="card">
+        <h2>Log contact</h2>
+        <form class="log-form" @onsubmit="SaveUpdate" @onsubmit:preventDefault>
+            <label>Status
+                <select @bind="updStatus">
+                    @foreach (var s in Ui.Statuses) { <option value="@s">@Ui.Status(s)</option> }
+                </select>
+            </label>
+            <label>Via
+                <select @bind="updChannel">
+                    <option value="">—</option>
+                    @foreach (var (key, label) in Ui.Channels) { <option value="@key">@label</option> }
+                </select>
+            </label>
+            <input @bind="updNote" @bind:event="oninput" maxlength="2000" placeholder="Outcome, e.g. talked to owner, call back Friday" aria-label="Outcome" />
+            <button type="submit" disabled="@(saving || (updStatus == l.Status && string.IsNullOrWhiteSpace(updNote)))">Save</button>
+        </form>
+        <p class="muted small">Saved to the timeline below and sent to Telegram.</p>
+    </section>
+
+    @if (l.Pitch.Count > 0)
+    {
+        <section class="card pitch">
+            <h2>🎯 What to pitch</h2>
+            <div class="pitch-grid">
+                @foreach (var (p, i) in l.Pitch.Select((p, i) => (p, i)))
+                {
+                    <article class="pitch-item @(i < 3 ? "top" : "")">
+                        <h3>@p.Label</h3>
+                        <p class="small">Because: @string.Join(", ", p.Reasons.Select(r => (r.Count > 1 ? $"{r.Count}× " : "") + Ui.Signal(r.Type)))</p>
+                        <details>
+                            <summary class="small">@p.Services.Length services</summary>
+                            <ul class="small services">@foreach (var sv in p.Services) { <li>@sv</li> }</ul>
+                        </details>
+                    </article>
+                }
+            </div>
+        </section>
+    }
+
+    <div class="grid-2">
+        <section class="card">
+            <h2>Company</h2>
+            <dl class="kv">
+                <dt>USDOT</dt>
+                <dd class="mono">@(c.DotNumber ?? "—")
+                    @if (c.DotNumber is not null)
+                    {
+                        <a href="https://safer.fmcsa.dot.gov/query.asp?searchtype=ANY&query_type=queryCarrierSnapshot&query_param=USDOT&query_string=@c.DotNumber" target="_blank" rel="noopener">SAFER snapshot ↗</a>
+                    }
+                </dd>
+                <dt>MC</dt><dd class="mono">@(c.McNumber ?? "—")</dd>
+                <dt>Location</dt><dd>@(c.Location ?? c.State ?? "—")</dd>
+                <dt>Fleet</dt><dd>@(c.FleetSize?.ToString() ?? "?") power units · @(c.Drivers?.ToString() ?? "?") drivers</dd>
+                <dt>USDOT status</dt><dd>@(c.OperatingStatus == "A" ? "Active" : c.OperatingStatus ?? "—")</dd>
+                <dt>Registered</dt><dd>@Ui.Date(c.AddedAt)</dd>
+                <dt>Operation</dt><dd>@(c.Attributes.GetValueOrDefault("classdef") ?? "—")</dd>
+                <dt>Website</dt>
+                <dd>@if (c.Website is not null) { <a href="@c.Website" target="_blank" rel="noopener">@c.Website</a> } else { <span>—</span> }</dd>
+            </dl>
+        </section>
+
+        <section class="card">
+            <h2>Why this score</h2>
+            <table class="plain breakdown">
+                @foreach (var b in l.ScoreBreakdown)
+                {
+                    <tr>
+                        <td class="pts @(b.Points < 0 ? "neg" : "pos")">@(b.Points > 0 ? "+" : "")@b.Points</td>
+                        <td><b>@b.Label</b><div class="muted small">@b.Reason</div></td>
+                    </tr>
+                }
+            </table>
+            <p class="muted small">Sum of matched rules, capped at 100. Scored @Ui.DateTime(l.ScoredAt).</p>
+
+            <h2 class="mt">Contacts</h2>
+            @if (l.Contacts.Count == 0) { <p class="muted">None found.</p> }
+            <ul class="contacts">
+                @foreach (var ct in l.Contacts)
+                {
+                    <li>
+                        @switch (ct.Type)
+                        {
+                            case "phone": <a href="tel:@ct.Value">@Ui.Phone(ct.Value)</a> break;
+                            case "fax": <span>@Ui.Phone(ct.Value)</span> break;
+                            case "person" or "address": <span>@ct.Value</span> break;
+                            case "email": <a href="mailto:@ct.Value">@ct.Value</a> break;
+                            default: <a href="@SafeUrl(ct.Value)" target="_blank" rel="noopener">@ct.Value</a> break;
+                        }
+                        <div class="muted small">@(ct.Label ?? ct.Type) · source:
+                            @if (ct.SourceUrl is not null) { <a href="@SafeUrl(ct.SourceUrl)" target="_blank" rel="noopener">@ct.Source</a> } else { <span>@ct.Source</span> }
+                        </div>
+                    </li>
+                }
+            </ul>
+        </section>
+    </div>
+
+    <section class="card">
+        <h2>Signals &amp; evidence <span class="muted">(@l.Signals.Count)</span></h2>
+        @foreach (var group in l.Signals.GroupBy(s => s.Type))
+        {
+            var list = group.ToList();
+            var open = expanded.Contains(group.Key);
+            <div class="sig-group">
+                <h3>@Ui.Signal(group.Key) <span class="muted">× @list.Count</span></h3>
+                @foreach (var s in open ? list : list.Take(Preview))
+                {
+                    <article class="signal">
+                        <div class="signal-head">
+                            <span class="sev @s.Severity">@s.Severity</span>
+                            <span>@s.Description</span>
+                        </div>
+                        <div class="muted small">
+                            Observed @Ui.Date(s.ObservedAt) · @(s.Origin == "rule" ? "Fact-based rule" : "AI interpretation"): @s.DetectedBy ·
+                            source @if (s.SourceUrl is not null) { <a href="@SafeUrl(s.SourceUrl)" target="_blank" rel="noopener">@s.Source record ↗</a> } else { <span>@s.Source</span> }
+                        </div>
+                        <details>
+                            <summary class="small">Evidence</summary>
+                            <dl class="kv small">
+                                @foreach (var (k, v) in s.Evidence) { <dt>@k</dt><dd class="mono">@Ui.EvidenceValue(v)</dd> }
+                            </dl>
+                        </details>
+                    </article>
+                }
+                @if (list.Count > Preview)
+                {
+                    <button class="link" @onclick="() => Toggle(group.Key)">@(open ? "Show less" : $"Show all {list.Count}")</button>
+                }
+            </div>
+        }
+    </section>
+
+    <section class="card">
+        <h2>Notes &amp; timeline</h2>
+        <form class="note-form" @onsubmit="AddNote" @onsubmit:preventDefault>
+            <textarea @bind="note" @bind:event="oninput" rows="2" maxlength="5000" placeholder="Add a note…" aria-label="Note"></textarea>
+            <button type="submit" disabled="@string.IsNullOrWhiteSpace(note)">Add note</button>
+        </form>
+        <ul class="timeline">
+            @foreach (var e in l.Events)
+            {
+                <li>
+                    <span class="ev-type">@e.EventType.Replace('_', ' ')</span>
+                    <span>@Describe(e)</span>
+                    <span class="muted small">@Ui.DateTime(e.CreatedAt)</span>
+                </li>
+            }
+        </ul>
+    </section>
+}
+
+@code {
+    [Parameter] public int Id { get; set; }
+    const int Preview = 3;
+    LeadDetail? lead;
+    string? error;
+    string updStatus = LeadStatus.New, updChannel = "", updNote = "", note = "";
+    bool saving, briefing;
+    readonly HashSet<string> expanded = [];
+
+    protected override async Task OnParametersSetAsync()
+    {
+        await Run(async () => lead = await Leads.GetAsync(Id));
+        if (lead is not null) updStatus = lead.Status;
+    }
+
+    void Toggle(string type)
+    {
+        if (!expanded.Remove(type)) expanded.Add(type);
+    }
+
+    async Task Run(Func<Task> action)
+    {
+        try
+        {
+            await action();
+            error = null;
+        }
+        catch (Exception e) when (e is BadRequestException or NotFoundException or InvalidOperationException or Anthropic.Exceptions.AnthropicApiException)
+        {
+            error = e.Message;
+        }
+    }
+
+    async Task RegenerateBrief()
+    {
+        briefing = true;
+        await Run(async () => lead = await Leads.RegenerateBriefAsync(Id));
+        briefing = false;
+    }
+
+    async Task SaveUpdate()
+    {
+        saving = true;
+        await Run(async () =>
+        {
+            lead = await Leads.UpdateAsync(Id, new LeadUpdate(updStatus, updChannel == "" ? null : updChannel, updNote.Trim() == "" ? null : updNote));
+            (updChannel, updNote) = ("", "");
+        });
+        saving = false;
+    }
+
+    async Task AddNote()
+    {
+        if (string.IsNullOrWhiteSpace(note)) return;
+        await Run(async () =>
+        {
+            await Leads.AddNoteAsync(Id, note);
+            note = "";
+            lead = await Leads.GetAsync(Id);
+        });
+    }
+
+    /// <summary>Links come from public registrations and websites: only http(s) is rendered as a link target.</summary>
+    static string SafeUrl(string url) => url.StartsWith("http://") || url.StartsWith("https://") ? url : "#";
+
+    static string Via(Dictionary<string, object?> m) => Ui.M(m, "channel") is { Length: > 0 } ch ? $" via {Ui.Channels.GetValueOrDefault(ch, ch)}" : "";
+
+    static string Describe(EventOut e)
+    {
+        var m = e.Meta;
+        return e.EventType switch
+        {
+            "CREATED" => $"Lead created with score {Ui.M(m, "score")} from signals: " + string.Join(", ", Items(m, "signals").Select(x => Ui.Signal(x.GetString() ?? ""))),
+            "SCORE_CHANGED" => $"Score changed {Ui.M(m, "from")} → {Ui.M(m, "to")}",
+            "STATUS_CHANGED" => $"{Ui.Status(Ui.M(m, "from"))} → {Ui.Status(Ui.M(m, "to"))}{Via(m)}" + (Ui.M(m, "note") is { Length: > 0 } n ? $" — {n}" : ""),
+            "SIGNALS_ADDED" => $"{Ui.M(m, "count")} new signal(s): " + string.Join("; ", Items(m, "signals").Take(3)
+                .Select(x => x.TryGetProperty("description", out var d) ? d.GetString() : "")),
+            "ENRICHED" => $"Found {Ui.M(m, "contacts")} new contact(s)" + (Ui.M(m, "website") is { Length: > 0 } w ? $" · website {w}" : ""),
+            "NOTIFIED" => $"Sent to Telegram (score {Ui.M(m, "score")})",
+            "NOTE" => $"Note{Via(m)}: {Ui.M(m, "text")}",
+            _ => Json.Serialize(m),
+        };
+    }
+
+    static IEnumerable<System.Text.Json.JsonElement> Items(Dictionary<string, object?> m, string key) =>
+        m.GetValueOrDefault(key) is System.Text.Json.JsonElement { ValueKind: System.Text.Json.JsonValueKind.Array } a ? a.EnumerateArray() : [];
+}

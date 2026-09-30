@@ -1,0 +1,14 @@
+@inherits LayoutComponentBase
+
+<header class="topbar">
+    <span class="brand">Lead Intel</span>
+    <AuthorizeView>
+        <nav>
+            <NavLink href="" Match="NavLinkMatch.All">Overview</NavLink>
+            <NavLink href="leads">Leads</NavLink>
+            <NavLink href="analytics">Analytics</NavLink>
+        </nav>
+        <form method="post" action="logout" data-enhance="false"><button type="submit" class="link">Sign out</button></form>
+    </AuthorizeView>
+</header>
+<main>@Body</main>
