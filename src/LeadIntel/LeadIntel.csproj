@@ -4,6 +4,9 @@
     <TargetFramework>net10.0</TargetFramework>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
+    <!-- the Dockerfile restores from the .csproj alone, before any .razor file exists; without this the SDK
+         skips the package with _framework/blazor.web.js and the published dashboard loses interactivity -->
+    <RequiresAspNetWebAssets>true</RequiresAspNetWebAssets>
   </PropertyGroup>
 
   <ItemGroup>
