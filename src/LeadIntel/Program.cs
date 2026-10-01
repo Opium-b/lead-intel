@@ -57,7 +57,7 @@ await using (var scope = app.Services.CreateAsyncScope())  // empty database: cr
     await Schema.EnsureCreatedAsync(scope.ServiceProvider.GetRequiredService<AppDbContext>());
 
 if (!app.Environment.IsDevelopment()) app.UseExceptionHandler("/error", createScopeForErrors: true);
-app.UseStaticFiles();
+app.MapStaticAssets();
 app.UseAuthentication();
 app.UseAuthorization();
 app.UseAntiforgery();
